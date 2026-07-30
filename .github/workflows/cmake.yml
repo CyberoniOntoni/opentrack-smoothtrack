@@ -48,6 +48,8 @@ jobs:
         sudo apt install libproc2-dev libopencv-dev libopencv-dev wine64-tools
         sudo apt install qt6-tools-dev qt6-serialport-dev qt6-base-private-dev
         sudo apt install libusb-1.0-0-dev libsdl2-dev
+        # Optional: SmoothTrack iOS USB tracker (tracker-smoothtrack / PR #2101)
+        sudo apt install libusbmuxd-dev || true
 
         mkdir /tmp/a
         wget -qO- https://github.com/microsoft/onnxruntime/releases/download/v1.23.2/onnxruntime-linux-x64-1.23.2.tgz  | tar --strip-components=1 -zxf - -C/tmp/a
@@ -63,8 +65,17 @@ jobs:
         BUILD_WITH_STATIC_CRT: 'OFF'
       if: matrix.os == 'windows-latest'
 
+    - name: Install libusbmuxd (Windows, optional)
+      shell: pwsh
+      run: |
+        if (-not $env:VCPKG_INSTALLATION_ROOT) { Write-Host "no vcpkg; skip"; exit 0 }
+        & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install libusbmuxd:x64-windows
+        if ($LASTEXITCODE -ne 0) { Write-Host "libusbmuxd optional install failed; continuing" }
+      if: matrix.os == 'windows-latest'
+      continue-on-error: true
+
     - name: Install opencv (macOS)
-      run: brew install opencv
+      run: brew install opencv libusbmuxd || brew install opencv
       if: matrix.os == 'macos-latest'
 
     - name: Install Qt
@@ -77,8 +88,30 @@ jobs:
         #use-official: true
       if: matrix.os != 'ubuntu-latest'
 
-    - name: Configure
+    - name: Configure (Windows)
+      shell: pwsh
+      run: |
+        # Prefer CMAKE_PREFIX_PATH over a full vcpkg toolchain so OpenCV from
+        # opencv-action is not masked. libusbmuxd (if installed) is still found.
+        $extra = @()
+        $vcpkgInstalled = Join-Path $env:VCPKG_INSTALLATION_ROOT "installed\x64-windows"
+        if ($env:VCPKG_INSTALLATION_ROOT -and (Test-Path $vcpkgInstalled)) {
+          $extra += "-DCMAKE_PREFIX_PATH=$vcpkgInstalled"
+        }
+        $cmd = @(
+          ".\.github\workflows\build-windows.bat", "cmake", "-GNinja",
+          "-S", "${{ github.workspace }}/",
+          "-B", "${{ github.workspace }}/build",
+          "-DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}",
+          "-DQt6_DIR=$env:QT_ROOT_DIR/lib/cmake/Qt6"
+        ) + $extra
+        & cmd.exe /c ($cmd -join ' ')
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      if: matrix.os == 'windows-latest'
+
+    - name: Configure (Unix)
       run: ${{matrix.cmake}} -GNinja -S ${{github.workspace}}/ -B ${{github.workspace}}/build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DQt6_DIR="${{env.QT_ROOT_DIR}}/lib/cmake/Qt6" -DONNXRuntime_DIR=/usr/lib/cmake/onnxruntime
+      if: matrix.os != 'windows-latest'
 
     - name: Build
       run: ${{matrix.cmake}} --build ${{github.workspace}}/build --config ${{env.BUILD_TYPE}} --target install

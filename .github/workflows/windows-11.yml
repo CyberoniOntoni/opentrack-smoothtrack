@@ -1,0 +1,116 @@
+# Build opentrack for Windows 11 (x64).
+# GitHub-hosted runners use Windows Server images; the produced binaries target
+# Windows 10/11 x64 with MSVC + Qt 6 + Ninja (same stack as the upstream CI).
+
+name: Windows 11 Build
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  BUILD_TYPE: Release
+
+jobs:
+  windows-11-x64:
+    name: Windows 11 x64 (MSVC)
+    runs-on: windows-latest
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout opentrack
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Checkout opentrack-depends
+        uses: actions/checkout@v4
+        with:
+          repository: opentrack/opentrack-depends
+          submodules: true
+          path: opentrack-depends
+
+      - name: Setup Ninja
+        uses: seanmiddleditch/gha-setup-ninja@master
+
+      - name: Install OpenCV
+        uses: cvpkg/opencv-action@main
+        with:
+          opencv_tag: '4.x'
+          BUILD_LIST: 'core,imgcodecs,imgproc,video,videoio,calib3d,highgui'
+          BUILD_SHARED_LIBS: 'OFF'
+          BUILD_WITH_STATIC_CRT: 'OFF'
+
+      - name: Install Qt 6
+        uses: jurplel/install-qt-action@v4
+        with:
+          dir: "${{ github.workspace }}/qt"
+          version: '6.10.3'
+          modules: qtserialport qtmultimedia qtimageformats
+          target: 'desktop'
+          arch: win64_msvc2022_64
+
+      # Optional: enables tracker-smoothtrack (PR #2101 SmoothTrack iOS USB).
+      # Skipped gracefully if vcpkg cannot provide libusbmuxd.
+      - name: Install libusbmuxd (vcpkg, optional)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          if (-not $env:VCPKG_INSTALLATION_ROOT) {
+            Write-Host "VCPKG_INSTALLATION_ROOT not set; skipping libusbmuxd"
+            exit 0
+          }
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install libusbmuxd:x64-windows --triplet x64-windows
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "libusbmuxd install failed; SmoothTrack USB module will be skipped"
+          }
+
+      - name: Configure (MSVC via build-windows.bat)
+        shell: pwsh
+        run: |
+          # Use CMAKE_PREFIX_PATH for optional vcpkg packages (libusbmuxd) without
+          # replacing the whole toolchain (keeps OpenCV from opencv-action).
+          $extra = ""
+          $vcpkgInstalled = Join-Path $env:VCPKG_INSTALLATION_ROOT "installed\x64-windows"
+          if ($env:VCPKG_INSTALLATION_ROOT -and (Test-Path $vcpkgInstalled)) {
+            $extra = "-DCMAKE_PREFIX_PATH=`"$vcpkgInstalled`""
+          }
+          $build = Join-Path $env:GITHUB_WORKSPACE "build"
+          $line = ".\.github\workflows\build-windows.bat cmake -GNinja -S `"$env:GITHUB_WORKSPACE`" -B `"$build`" -DCMAKE_BUILD_TYPE=$env:BUILD_TYPE -DQt6_DIR=`"$env:QT_ROOT_DIR/lib/cmake/Qt6`" $extra"
+          Write-Host $line
+          cmd.exe /c $line
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build and install
+        shell: cmd
+        run: |
+          .\.github\workflows\build-windows.bat cmake --build "%GITHUB_WORKSPACE%\build" --config %BUILD_TYPE% --target install
+
+      - name: Package install tree
+        shell: pwsh
+        run: |
+          $install = Join-Path $env:GITHUB_WORKSPACE "build\install"
+          if (-not (Test-Path $install)) {
+            # Some generators place install under build/install; fall back to install prefix scan
+            $candidates = Get-ChildItem -Path (Join-Path $env:GITHUB_WORKSPACE "build") -Recurse -Filter "opentrack.exe" -ErrorAction SilentlyContinue |
+              Select-Object -First 5 FullName
+            Write-Host "opentrack.exe search:"
+            $candidates | ForEach-Object { Write-Host $_.FullName }
+            if (Test-Path $install) { }
+            else {
+              # Default CMAKE_INSTALL_PREFIX is ${CMAKE_BINARY_DIR}/install
+              throw "Install tree not found at $install"
+            }
+          }
+          Get-ChildItem $install | Select-Object Name, Mode
+          Compress-Archive -Path (Join-Path $install '*') -DestinationPath (Join-Path $env:GITHUB_WORKSPACE "opentrack-windows11-x64.zip") -Force
+
+      - name: Upload Windows 11 build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: opentrack-windows11-x64
+          path: ${{ github.workspace }}/opentrack-windows11-x64.zip
+          if-no-files-found: error
+          retention-days: 14

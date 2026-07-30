@@ -1,0 +1,36 @@
+# SmoothTrack iOS USB tracker via libusbmuxd (optional dependency)
+find_package(PkgConfig QUIET)
+
+set(USBMUXD_FOUND FALSE)
+
+if(PkgConfig_FOUND)
+    pkg_check_modules(USBMUXD QUIET IMPORTED_TARGET libusbmuxd-2.0)
+    if(TARGET PkgConfig::USBMUXD)
+        set(USBMUXD_FOUND TRUE)
+    endif()
+endif()
+
+if(NOT USBMUXD_FOUND)
+    find_path(USBMUXD_INCLUDE_DIR NAMES usbmuxd.h)
+    find_library(USBMUXD_LIBRARY NAMES usbmuxd usbmuxd-2.0 libusbmuxd)
+    if(USBMUXD_INCLUDE_DIR AND USBMUXD_LIBRARY)
+        set(USBMUXD_FOUND TRUE)
+    endif()
+endif()
+
+if(USBMUXD_FOUND)
+    otr_module(tracker-smoothtrack)
+
+    if(TARGET PkgConfig::USBMUXD)
+        target_link_libraries(${self} PRIVATE PkgConfig::USBMUXD)
+    else()
+        target_include_directories(${self} SYSTEM PRIVATE "${USBMUXD_INCLUDE_DIR}")
+        target_link_libraries(${self} PRIVATE "${USBMUXD_LIBRARY}")
+    endif()
+
+    if(WIN32)
+        target_link_libraries(${self} PRIVATE ws2_32)
+    endif()
+else()
+    message(STATUS "libusbmuxd not found — skipping tracker-smoothtrack (SmoothTrack USB)")
+endif()
