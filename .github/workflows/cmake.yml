@@ -1,8 +1,9 @@
 name: CMake
 
+# Disabled for now — use "Windows 11 Build" workflow instead.
+# Re-enable push/pull_request when multi-platform CI is needed again.
 on:
-  - push
-  - pull_request
+  workflow_dispatch:
 
 env:
   # Customize the CMake build type here (Release, Debug, RelWithDebInfo, etc.)
