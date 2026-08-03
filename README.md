@@ -12,6 +12,8 @@ Please first refer to <<https://github.com/opentrack/opentrack/wiki>>
 for [new user guide](https://github.com/opentrack/opentrack/wiki/Quick-Start-Guide-(WIP)), [frequent answers](https://github.com/opentrack/opentrack/wiki/common-issues), specific tracker/filter
 documentation. See also the [gameplay video](https://www.youtube.com/watch?v=XI73ul_FnBI) with opentrack set up.
 
+This Fork has Smoothtrack USB input built-in.
+
 ## Usage
 
 `opentrack` is an application dedicated to tracking user's head
