@@ -1,4 +1,4 @@
-# SmoothTrack iOS USB tracker via libusbmuxd (optional dependency)
+# SmoothTrack USB tracker (iOS via libusbmuxd + Android via ADB Relay)
 find_package(PkgConfig QUIET)
 
 set(USBMUXD_FOUND FALSE)
@@ -29,8 +29,19 @@ if(NOT USBMUXD_FOUND)
     endif()
 endif()
 
+otr_module(tracker-smoothtrack)
+
+target_sources(${self} PRIVATE
+    adb_client.cpp
+    adb_client.h
+)
+
+if(WIN32)
+    target_link_libraries(${self} PRIVATE ws2_32)
+endif()
+
 if(USBMUXD_FOUND)
-    otr_module(tracker-smoothtrack)
+    target_compile_definitions(${self} PRIVATE OPENTRACK_SMOOTHTRACK_HAVE_USBMUXD)
 
     if(USBMUXD_TARGET)
         target_link_libraries(${self} PRIVATE ${USBMUXD_TARGET})
@@ -40,8 +51,6 @@ if(USBMUXD_FOUND)
     endif()
 
     if(WIN32)
-        target_link_libraries(${self} PRIVATE ws2_32)
-
         # Ship runtime DLLs next to modules so QLibrary can load the tracker.
         # Without these, LoadLibrary fails and the input never appears in the UI.
         set(_usbmuxd_runtime_names
@@ -85,5 +94,18 @@ if(USBMUXD_FOUND)
         endforeach()
     endif()
 else()
-    message(STATUS "libusbmuxd not found — skipping tracker-smoothtrack (SmoothTrack USB)")
+    message(STATUS "libusbmuxd not found — tracker-smoothtrack will support Android USB only")
 endif()
+
+# Install Android relay binaries if present in source tree
+set(_relay_bins
+    "${CMAKE_CURRENT_SOURCE_DIR}/android/st-relay-arm64"
+    "${CMAKE_CURRENT_SOURCE_DIR}/android/st-relay-armv7"
+)
+foreach(_relay_bin IN LISTS _relay_bins)
+    if(EXISTS "${_relay_bin}")
+        install(FILES "${_relay_bin}"
+                DESTINATION "${opentrack-libexec}/android"
+                PERMISSIONS ${opentrack-perms-exec})
+    endif()
+endforeach()

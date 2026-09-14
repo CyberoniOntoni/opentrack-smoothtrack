@@ -66,6 +66,36 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             Write-Host "libusbmuxd install failed; SmoothTrack USB module will be skipped"
           }
+      - name: Build Android relay binaries (optional)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $ndk = $env:ANDROID_NDK_LATEST_HOME
+          if (-not $ndk -or -not (Test-Path $ndk)) { $ndk = $env:ANDROID_NDK_ROOT }
+          if (-not $ndk -or -not (Test-Path $ndk)) {
+            $candidate = Get-ChildItem "C:\Program Files (x86)\Android\android-sdk\ndk" -Directory -ErrorAction SilentlyContinue |
+              Sort-Object Name -Descending | Select-Object -First 1
+            if ($candidate) { $ndk = $candidate.FullName }
+          }
+          if ($ndk -and (Test-Path $ndk)) {
+            Write-Host "Android NDK located at: $ndk"
+            $llvmBin = Join-Path $ndk "toolchains\llvm\prebuilt\windows-x86_64\bin"
+            $clang64 = Join-Path $llvmBin "aarch64-linux-android24-clang.cmd"
+            $clang32 = Join-Path $llvmBin "armv7a-linux-androideabi24-clang.cmd"
+            $relaySrc = Join-Path $env:GITHUB_WORKSPACE "tracker-smoothtrack\android\relay.c"
+            $out64 = Join-Path $env:GITHUB_WORKSPACE "tracker-smoothtrack\android\st-relay-arm64"
+            $out32 = Join-Path $env:GITHUB_WORKSPACE "tracker-smoothtrack\android\st-relay-armv7"
+            if (Test-Path $clang64) {
+              Write-Host "Building st-relay-arm64..."
+              & $clang64 -O2 -Wall -static "$relaySrc" -o "$out64"
+            }
+            if (Test-Path $clang32) {
+              Write-Host "Building st-relay-armv7..."
+              & $clang32 -O2 -Wall -static "$relaySrc" -o "$out32"
+            }
+          } else {
+            Write-Host "Android NDK not found; skipping relay compilation"
+          }
 
       - name: Configure (MSVC via build-windows.bat)
         shell: pwsh
@@ -103,6 +133,16 @@ jobs:
               # Default CMAKE_INSTALL_PREFIX is ${CMAKE_BINARY_DIR}/install
               throw "Install tree not found at $install"
             }
+          }
+          # Bundle Android ADB tools from runner SDK if available
+          $ptPath = "C:\Program Files (x86)\Android\android-sdk\platform-tools"
+          if (Test-Path (Join-Path $ptPath "adb.exe")) {
+            $dest = Join-Path $install "libexec\opentrack"
+            if (-not (Test-Path $dest)) { $dest = $install }
+            Copy-Item -Path (Join-Path $ptPath "adb.exe") -Destination $dest -Force -ErrorAction SilentlyContinue
+            Copy-Item -Path (Join-Path $ptPath "AdbWinApi.dll") -Destination $dest -Force -ErrorAction SilentlyContinue
+            Copy-Item -Path (Join-Path $ptPath "AdbWinUsbApi.dll") -Destination $dest -Force -ErrorAction SilentlyContinue
+            Write-Host "Packaged ADB tools to $dest"
           }
           Get-ChildItem $install | Select-Object Name, Mode
           Compress-Archive -Path (Join-Path $install '*') -DestinationPath (Join-Path $env:GITHUB_WORKSPACE "opentrack-windows11-x64.zip") -Force
