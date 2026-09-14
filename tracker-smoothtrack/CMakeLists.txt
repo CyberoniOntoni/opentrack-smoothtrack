@@ -1,36 +1,49 @@
-# SmoothTrack iOS USB tracker via libusbmuxd (optional dependency)
-find_package(PkgConfig QUIET)
+# SmoothTrack USB tracker (iOS via libusbmuxd + Android via ADB Relay)
+option(OPENTRACK_HAS_USBMUXD "Build SmoothTrack with iOS libusbmuxd support" ON)
 
 set(USBMUXD_FOUND FALSE)
 set(USBMUXD_TARGET "")
 
-if(PkgConfig_FOUND)
-    pkg_check_modules(USBMUXD QUIET IMPORTED_TARGET libusbmuxd-2.0)
-    if(TARGET PkgConfig::USBMUXD)
-        set(USBMUXD_FOUND TRUE)
-        set(USBMUXD_TARGET PkgConfig::USBMUXD)
+if(OPENTRACK_HAS_USBMUXD)
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(USBMUXD QUIET IMPORTED_TARGET libusbmuxd-2.0)
+        if(TARGET PkgConfig::USBMUXD)
+            set(USBMUXD_FOUND TRUE)
+            set(USBMUXD_TARGET PkgConfig::USBMUXD)
+        endif()
+    endif()
+
+    # vcpkg provides an unofficial CMake package on Windows
+    if(NOT USBMUXD_FOUND)
+        find_package(unofficial-libusbmuxd CONFIG QUIET)
+        if(TARGET unofficial::libusbmuxd::libusbmuxd)
+            set(USBMUXD_FOUND TRUE)
+            set(USBMUXD_TARGET unofficial::libusbmuxd::libusbmuxd)
+        endif()
+    endif()
+
+    if(NOT USBMUXD_FOUND)
+        find_path(USBMUXD_INCLUDE_DIR NAMES usbmuxd.h)
+        find_library(USBMUXD_LIBRARY NAMES usbmuxd usbmuxd-2.0 libusbmuxd)
+        if(USBMUXD_INCLUDE_DIR AND USBMUXD_LIBRARY)
+            set(USBMUXD_FOUND TRUE)
+        endif()
     endif()
 endif()
 
-# vcpkg provides an unofficial CMake package on Windows
-if(NOT USBMUXD_FOUND)
-    find_package(unofficial-libusbmuxd CONFIG QUIET)
-    if(TARGET unofficial::libusbmuxd::libusbmuxd)
-        set(USBMUXD_FOUND TRUE)
-        set(USBMUXD_TARGET unofficial::libusbmuxd::libusbmuxd)
-    endif()
-endif()
+otr_module(tracker-smoothtrack)
 
-if(NOT USBMUXD_FOUND)
-    find_path(USBMUXD_INCLUDE_DIR NAMES usbmuxd.h)
-    find_library(USBMUXD_LIBRARY NAMES usbmuxd usbmuxd-2.0 libusbmuxd)
-    if(USBMUXD_INCLUDE_DIR AND USBMUXD_LIBRARY)
-        set(USBMUXD_FOUND TRUE)
-    endif()
+if(WIN32)
+    target_link_libraries(${self} PRIVATE ws2_32)
 endif()
 
 if(USBMUXD_FOUND)
-    otr_module(tracker-smoothtrack)
+    target_compile_definitions(${self} PRIVATE
+        OPENTRACK_SMOOTHTRACK_HAVE_USBMUXD
+        OPENTRACK_HAS_USBMUXD
+        BUILD_USBMUXD
+    )
 
     if(USBMUXD_TARGET)
         target_link_libraries(${self} PRIVATE ${USBMUXD_TARGET})
@@ -40,8 +53,6 @@ if(USBMUXD_FOUND)
     endif()
 
     if(WIN32)
-        target_link_libraries(${self} PRIVATE ws2_32)
-
         # Ship runtime DLLs next to modules so QLibrary can load the tracker.
         # Without these, LoadLibrary fails and the input never appears in the UI.
         set(_usbmuxd_runtime_names
@@ -85,5 +96,69 @@ if(USBMUXD_FOUND)
         endforeach()
     endif()
 else()
-    message(STATUS "libusbmuxd not found — skipping tracker-smoothtrack (SmoothTrack USB)")
+    message(STATUS "libusbmuxd not found — tracker-smoothtrack will support Android USB only")
+endif()
+
+# Cross-compile Android relays into the build tree when NDK clang is available.
+set(_st_ndk "$ENV{ANDROID_NDK_ROOT}")
+if(NOT _st_ndk)
+    set(_st_ndk "$ENV{ANDROID_NDK_HOME}")
+endif()
+if(NOT _st_ndk)
+    set(_st_ndk "$ENV{ANDROID_NDK_LATEST_HOME}")
+endif()
+
+set(_st_relay_dir "${CMAKE_CURRENT_BINARY_DIR}/android")
+file(MAKE_DIRECTORY "${_st_relay_dir}")
+
+set(_st_clang64 "")
+set(_st_clang32 "")
+if(_st_ndk)
+    file(GLOB _st_ndk_bins "${_st_ndk}/toolchains/llvm/prebuilt/*/bin")
+    find_program(_st_clang64
+        NAMES aarch64-linux-android24-clang aarch64-linux-android24-clang.cmd
+        PATHS ${_st_ndk_bins}
+        NO_DEFAULT_PATH
+    )
+    find_program(_st_clang32
+        NAMES armv7a-linux-androideabi24-clang armv7a-linux-androideabi24-clang.cmd
+        PATHS ${_st_ndk_bins}
+        NO_DEFAULT_PATH
+    )
+endif()
+
+if(_st_clang64 AND _st_clang32)
+    set(_st_relay_src "${CMAKE_CURRENT_SOURCE_DIR}/android/relay.c")
+    add_custom_command(
+        OUTPUT "${_st_relay_dir}/st-relay-arm64"
+        COMMAND "${_st_clang64}" -O2 -Wall -Wextra -static "${_st_relay_src}"
+                -o "${_st_relay_dir}/st-relay-arm64"
+        DEPENDS "${_st_relay_src}"
+        COMMENT "Cross-compiling st-relay-arm64"
+    )
+    add_custom_command(
+        OUTPUT "${_st_relay_dir}/st-relay-armv7"
+        COMMAND "${_st_clang32}" -O2 -Wall -Wextra -static "${_st_relay_src}"
+                -o "${_st_relay_dir}/st-relay-armv7"
+        DEPENDS "${_st_relay_src}"
+        COMMENT "Cross-compiling st-relay-armv7"
+    )
+    add_custom_target(st-relay-android ALL
+        DEPENDS
+            "${_st_relay_dir}/st-relay-arm64"
+            "${_st_relay_dir}/st-relay-armv7"
+    )
+    install(FILES
+            "${_st_relay_dir}/st-relay-arm64"
+            "${_st_relay_dir}/st-relay-armv7"
+            DESTINATION "${opentrack-libexec}/android"
+            PERMISSIONS ${opentrack-perms-exec})
+else()
+    message(WARNING "Android NDK clang not found — st-relay will not be built")
+endif()
+
+# Host test for relay I/O helpers. POSIX sockets only; not installed.
+if(NOT WIN32)
+    add_executable(test_relay_io "${CMAKE_SOURCE_DIR}/tests/test_relay_io.c")
+    target_include_directories(test_relay_io PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/android")
 endif()

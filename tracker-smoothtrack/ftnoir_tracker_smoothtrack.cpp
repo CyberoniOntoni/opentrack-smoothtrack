@@ -1,5 +1,5 @@
-/* Copyright (c) 2025
-
+/* Copyright (c) 2025-2026 CyberoniOntoni
+ *
  * Permission to use, copy, modify, and/or distribute this
  * software for any purpose with or without fee is hereby granted,
  * provided that the above copyright notice and this permission
@@ -36,8 +36,15 @@ smoothtrack::~smoothtrack()
 {
     requestInterruption();
     wait();
+
+    if (server.isListening())
+        server.close();
+
+    if (adb)
+        adb->stop();
 }
 
+#if defined(OPENTRACK_SMOOTHTRACK_HAVE_USBMUXD)
 static qintptr connect_usbmuxd(uint16_t port, QString* error_detail)
 {
     usbmuxd_device_info_t* device_list = nullptr;
@@ -67,9 +74,11 @@ static qintptr connect_usbmuxd(uint16_t port, QString* error_detail)
 
     return static_cast<qintptr>(fd);
 }
+#endif
 
-module_status smoothtrack::start_tracker(QFrame*)
+module_status smoothtrack::start_ios()
 {
+#if defined(OPENTRACK_SMOOTHTRACK_HAVE_USBMUXD)
     QString detail;
     const qintptr fd = connect_usbmuxd(static_cast<uint16_t>(int(s.port)), &detail);
     if (fd < 0)
@@ -85,38 +94,143 @@ module_status smoothtrack::start_tracker(QFrame*)
                          .arg(detail));
     }
 
-    // QAbstractSocket takes ownership of the descriptor on success.
-    if (!sock.setSocketDescriptor(fd))
+    sock = std::make_unique<QTcpSocket>();
+    if (!sock->setSocketDescriptor(fd))
     {
-        const QString err = sock.errorString();
+        const QString err = sock->errorString();
         qDebug() << "smoothtrack: setSocketDescriptor failed:" << err;
         close_native_fd(fd);
+        sock.reset();
         return error(tr("Can't attach socket to usbmuxd connection — %1").arg(err));
     }
 
-    sock.moveToThread(this);
+    sock->moveToThread(this);
+    start();
+    return status_ok();
+#else
+    return error(tr("iOS USB support was not compiled in this build (libusbmuxd missing)."));
+#endif
+}
+
+module_status smoothtrack::start_android()
+{
+    if (server.isListening())
+        server.close();
+
+    const quint16 port = static_cast<quint16>(int(s.android_port));
+    if (!server.listen(QHostAddress::LocalHost, port))
+    {
+        return error(tr("Cannot bind local TCP server on port %1 for Android relay: %2")
+                         .arg(port)
+                         .arg(server.errorString()));
+    }
+
+    const QString adb_exe = adb_client::find_adb(QString(s.adb_path));
+    if (adb_exe.isEmpty())
+    {
+        server.close();
+        return error(tr("ADB executable not found.\n"
+                        "Please place adb in OpenTrack directory, on system PATH, "
+                        "or specify its location in SmoothTrack settings."));
+    }
+
+    adb = std::make_unique<adb_client>();
+    QString err_detail;
+    if (!adb->start(adb_exe, int(s.android_port), int(s.android_port), &err_detail))
+    {
+        server.close();
+        adb.reset();
+        return error(err_detail);
+    }
+
+    if (!adb->is_running())
+    {
+        const QString detail = adb->relay_stderr();
+        server.close();
+        adb->stop();
+        adb.reset();
+        return error(detail.isEmpty() ? tr("st-relay is not running") : detail);
+    }
+
+    if (!server.waitForNewConnection(7000))
+    {
+        const bool still_running = adb && adb->is_running();
+        const QString detail = adb ? adb->relay_stderr() : QString();
+        server.close();
+        if (adb)
+            adb->stop();
+        adb.reset();
+
+        if (!still_running)
+        {
+            return error(detail.isEmpty()
+                             ? tr("st-relay exited before connecting over ADB reverse (tcp:%1).").arg(port)
+                             : tr("st-relay exited before connecting over ADB reverse:\n%1").arg(detail));
+        }
+
+        QString msg = tr("Timed out waiting for st-relay to connect over ADB reverse (tcp:%1).\n"
+                         "1. USB debugging authorized\n"
+                         "2. adb reverse and st-relay started (see details if present)\n"
+                         "3. Phone SmoothTrack destination 127.0.0.1:%1 is for UDP after the relay is up, not for this step")
+                          .arg(port);
+        if (!detail.isEmpty())
+            msg += QLatin1Char('\n') + detail;
+        return error(msg);
+    }
+
+    QTcpSocket* client = server.nextPendingConnection();
+    if (!client)
+    {
+        server.close();
+        if (adb)
+            adb->stop();
+        adb.reset();
+        return error(tr("Failed to accept Android relay connection."));
+    }
+
+    client->setParent(nullptr);
+    client->moveToThread(this);
+    sock.reset(client);
+
     start();
     return status_ok();
 }
 
+module_status smoothtrack::start_tracker(QFrame*)
+{
+    if (s.platform == PLATFORM_ANDROID)
+        return start_android();
+    else
+        return start_ios();
+}
+
 void smoothtrack::run()
 {
-    while (!isInterruptionRequested())
+    while (!isInterruptionRequested() && sock && sock->state() == QAbstractSocket::ConnectedState)
     {
-        if (!sock.waitForReadyRead(100))
+        if (!sock->waitForReadyRead(100))
         {
-            if (sock.state() != QAbstractSocket::ConnectedState)
+            if (sock->state() != QAbstractSocket::ConnectedState)
             {
-                qDebug() << "smoothtrack: socket disconnected:" << sock.errorString();
+                qDebug() << "smoothtrack: socket disconnected:" << sock->errorString();
                 break;
             }
             continue;
         }
 
-        while (sock.bytesAvailable() >= static_cast<qint64>(sizeof(double[6])))
+        if (sock->state() != QAbstractSocket::ConnectedState)
+        {
+            qDebug() << "smoothtrack: socket disconnected:" << sock->errorString();
+            break;
+        }
+
+        bool has_new_pose = false;
+        double latest_pose[6]{};
+
+        while (sock->bytesAvailable() >= static_cast<qint64>(sizeof(double[6])))
         {
             double pose[6]{};
-            const qint64 sz = sock.read(reinterpret_cast<char*>(pose), sizeof(pose));
+            const qint64 sz = sock->read(reinterpret_cast<char*>(pose), sizeof(pose));
 
             if (sz != static_cast<qint64>(sizeof(pose)))
                 break;
@@ -134,14 +248,25 @@ void smoothtrack::run()
 
             if (ok)
             {
-                QMutexLocker lock(&mutex);
                 for (unsigned i = 0; i < 6; i++)
-                    last_recv_pose[i] = pose[i];
+                    latest_pose[i] = pose[i];
+                has_new_pose = true;
             }
+        }
+
+        if (has_new_pose)
+        {
+            QMutexLocker lock(&mutex);
+            for (unsigned i = 0; i < 6; i++)
+                last_recv_pose[i] = latest_pose[i];
         }
     }
 
-    sock.abort();
+    if (sock)
+    {
+        sock->abort();
+        sock.reset();
+    }
 }
 
 void smoothtrack::data(double* data)

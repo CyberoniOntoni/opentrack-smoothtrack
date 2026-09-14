@@ -46,7 +46,7 @@ For the new Alpha Spectrum filter parameter guide, see [filter-alpha-spectrum/RE
 - NeuralNet Tracker, AI-based head pose estimation with webcams.
 - Eyeware Beam<sup>[[1](https://beam.eyeware.tech/)]</sup>
 - Tobii eye tracker
-- SmoothTrack Head Tracker (iOS/Android)<sup>[[1](https://smoothtrack.app/)]</sup> — Wi‑Fi via “UDP over network”; iOS USB via “SmoothTrack iOS (USB)” when built with libusbmuxd
+- SmoothTrack Head Tracker (iOS/Android)<sup>[[1](https://smoothtrack.app/)]</sup> — Wi‑Fi via “UDP over network”; USB via “SmoothTrack (USB)” (iOS via libusbmuxd, Android via ADB relay; STUSB/Gnirehtet not required)
 - XReal One<sup>[[1](https://next.xreal.com/one/)]</sup> and probably XReal One Pro<sup>[[2](https://www.xreal.com/one-pro)]</sup>glasses, see details [here](https://gist.github.com/X-Stuff/0c21145b07a4baa3012fae8bffbe0577)
 
 ## Output protocols

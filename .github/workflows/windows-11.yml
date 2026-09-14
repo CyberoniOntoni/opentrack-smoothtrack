@@ -67,15 +67,42 @@ jobs:
             Write-Host "libusbmuxd install failed; SmoothTrack USB module will be skipped"
           }
 
+      - uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r27c
+          add-to-path: false
+
+      - name: Export Android NDK
+        env:
+          ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not $env:ANDROID_NDK_ROOT) {
+            throw "Android NDK setup failed: nttld/setup-ndk did not provide ndk-path for r27c"
+          }
+          if (-not (Test-Path -LiteralPath $env:ANDROID_NDK_ROOT)) {
+            throw "Android NDK setup failed: path does not exist: $($env:ANDROID_NDK_ROOT)"
+          }
+          if ($env:GITHUB_ENV) {
+            Add-Content -LiteralPath $env:GITHUB_ENV -Value "ANDROID_NDK_ROOT=$($env:ANDROID_NDK_ROOT)"
+          }
+          Write-Host "Exported ANDROID_NDK_ROOT=$($env:ANDROID_NDK_ROOT) for CMake st-relay-android"
+
       - name: Configure (MSVC via build-windows.bat)
+        env:
+          ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
         shell: pwsh
         run: |
           # Use CMAKE_PREFIX_PATH for optional vcpkg packages (libusbmuxd) without
           # replacing the whole toolchain (keeps OpenCV from opencv-action).
           $extra = ""
-          $vcpkgInstalled = Join-Path $env:VCPKG_INSTALLATION_ROOT "installed\x64-windows"
-          if ($env:VCPKG_INSTALLATION_ROOT -and (Test-Path $vcpkgInstalled)) {
-            $extra = "-DCMAKE_PREFIX_PATH=`"$vcpkgInstalled`""
+          if ($env:VCPKG_INSTALLATION_ROOT) {
+            $vcpkgInstalled = Join-Path $env:VCPKG_INSTALLATION_ROOT "installed\x64-windows"
+            if (Test-Path $vcpkgInstalled) {
+              $extra = "-DCMAKE_PREFIX_PATH=`"$vcpkgInstalled`""
+            }
           }
           $build = Join-Path $env:GITHUB_WORKSPACE "build"
           $line = ".\.github\workflows\build-windows.bat cmake -GNinja -S `"$env:GITHUB_WORKSPACE`" -B `"$build`" -DCMAKE_BUILD_TYPE=$env:BUILD_TYPE -DQt6_DIR=`"$env:QT_ROOT_DIR/lib/cmake/Qt6`" $extra"
@@ -83,7 +110,16 @@ jobs:
           cmd.exe /c $line
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Build st-relay
+        env:
+          ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
+        shell: cmd
+        run: |
+          .\.github\workflows\build-windows.bat cmake --build "%GITHUB_WORKSPACE%\build" --config %BUILD_TYPE% --target st-relay-android
+
       - name: Build and install
+        env:
+          ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
         shell: cmd
         run: |
           .\.github\workflows\build-windows.bat cmake --build "%GITHUB_WORKSPACE%\build" --config %BUILD_TYPE% --target install
@@ -91,21 +127,206 @@ jobs:
       - name: Package install tree
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
           $install = Join-Path $env:GITHUB_WORKSPACE "build\install"
           if (-not (Test-Path $install)) {
             # Some generators place install under build/install; fall back to install prefix scan
-            $candidates = Get-ChildItem -Path (Join-Path $env:GITHUB_WORKSPACE "build") -Recurse -Filter "opentrack.exe" -ErrorAction SilentlyContinue |
-              Select-Object -First 5 FullName
-            Write-Host "opentrack.exe search:"
-            $candidates | ForEach-Object { Write-Host $_.FullName }
-            if (Test-Path $install) { }
-            else {
+            $candidates = Get-ChildItem -Path (Join-Path $env:GITHUB_WORKSPACE "build") -Recurse -Filter "opentrack.exe" -ErrorAction SilentlyContinue
+            if ($candidates) {
+              $firstCand = $candidates | Select-Object -First 1
+              $install = Split-Path -Parent $firstCand.FullName
+              Write-Host "Install tree inferred from opentrack.exe location: $install"
+            } else {
               # Default CMAKE_INSTALL_PREFIX is ${CMAKE_BINARY_DIR}/install
               throw "Install tree not found at $install"
             }
           }
-          Get-ChildItem $install | Select-Object Name, Mode
-          Compress-Archive -Path (Join-Path $install '*') -DestinationPath (Join-Path $env:GITHUB_WORKSPACE "opentrack-windows11-x64.zip") -Force
+
+          # 1. Locate ADB platform-tools directory from runner SDK
+          $ptCands = @()
+          $ptCands += "C:\Program Files (x86)\Android\android-sdk\platform-tools"
+          if ($env:ANDROID_HOME) { $ptCands += (Join-Path $env:ANDROID_HOME "platform-tools") }
+          if ($env:ANDROID_SDK_ROOT) { $ptCands += (Join-Path $env:ANDROID_SDK_ROOT "platform-tools") }
+          $ptCands += "C:\Android\android-sdk\platform-tools"
+          $ptCands += "C:\ProgramData\Android\android-sdk\platform-tools"
+          if ($env:LOCALAPPDATA) { $ptCands += (Join-Path $env:LOCALAPPDATA "Android\Sdk\platform-tools") }
+          $adbCmd = Get-Command adb.exe -ErrorAction SilentlyContinue
+          if ($adbCmd) {
+            $ptCands += (Split-Path -Parent $adbCmd.Source)
+          }
+          $ptCandidates = $ptCands | Where-Object { $_ -and (Test-Path $_) }
+
+          $adbFiles = @("adb.exe", "AdbWinApi.dll", "AdbWinUsbApi.dll")
+
+          $ptFound = $null
+          foreach ($cand in $ptCandidates) {
+            if ($cand) {
+              $hasAllAdb = $true
+              foreach ($f in $adbFiles) {
+                if (-not (Test-Path (Join-Path $cand $f))) {
+                  $hasAllAdb = $false
+                  break
+                }
+              }
+              if ($hasAllAdb) {
+                $ptFound = $cand
+                break
+              }
+            }
+          }
+
+          if (-not $ptFound) {
+            Write-Host "Platform-tools not found in SDK paths; downloading official Windows platform-tools package..."
+            $tempDir = if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { [System.IO.Path]::GetTempPath() }
+            $ptZip = Join-Path $tempDir "platform-tools.zip"
+            $ptExtract = Join-Path $tempDir "pt"
+            if (Test-Path $ptExtract) {
+              Remove-Item -Path $ptExtract -Recurse -Force
+            }
+            $ptUrl = "https://dl.google.com/android/repository/platform-tools_r36.0.0-win.zip"
+            $ptSha256 = "12C2841F354E92A0EB2FD7BF6F0F9BF8538ABCE7BD6B060AC8349D6F6A61107C"
+            Invoke-WebRequest -Uri $ptUrl -OutFile $ptZip
+            $actualSha = (Get-FileHash -Path $ptZip -Algorithm SHA256).Hash
+            if ($actualSha.ToUpperInvariant() -ne $ptSha256.ToUpperInvariant()) {
+              throw "platform-tools SHA256 mismatch: got $actualSha expected $ptSha256 from $ptUrl"
+            }
+            Expand-Archive -Path $ptZip -DestinationPath $ptExtract -Force
+            $ptFound = Join-Path $ptExtract "platform-tools"
+            if (-not (Test-Path (Join-Path $ptFound "adb.exe"))) {
+              if (Test-Path (Join-Path $ptExtract "adb.exe")) {
+                $ptFound = $ptExtract
+              } else {
+                throw "Downloaded platform-tools package does not contain adb.exe"
+              }
+            }
+          }
+
+          Write-Host "ADB platform-tools located at: $ptFound"
+
+          # 2. Bundle ADB tools (adb.exe, AdbWinApi.dll, AdbWinUsbApi.dll)
+          $adbDests = @(
+            $install
+          )
+
+          foreach ($dest in $adbDests) {
+            if (-not (Test-Path $dest)) {
+              New-Item -ItemType Directory -Force -Path $dest | Out-Null
+            }
+            foreach ($f in $adbFiles) {
+              $src = Join-Path $ptFound $f
+              $destFile = Join-Path $dest $f
+              if (Test-Path $src) {
+                if (-not (Test-Path $destFile) -or ([System.IO.Path]::GetFullPath($src) -ne [System.IO.Path]::GetFullPath($destFile))) {
+                  Copy-Item -Path $src -Destination $dest -Force
+                }
+                Write-Host "Packaged ADB tool $f -> $dest"
+              } else {
+                throw "Required ADB file missing from $($ptFound): $f"
+              }
+            }
+          }
+
+          $relayFiles = @("st-relay-arm64", "st-relay-armv7")
+          $relayDestDir = Join-Path $install "modules\android"
+          $relayBuildDir = Join-Path $env:GITHUB_WORKSPACE "build\tracker-smoothtrack\android"
+
+          if (-not (Test-Path $relayDestDir)) {
+            New-Item -ItemType Directory -Force -Path $relayDestDir | Out-Null
+          }
+
+          foreach ($rf in $relayFiles) {
+            $destFile = Join-Path $relayDestDir $rf
+            if (Test-Path $destFile) {
+              Write-Host "Relay $rf already installed at $destFile"
+              continue
+            }
+            $src = Join-Path $relayBuildDir $rf
+            if ((Test-Path $src) -and ([System.IO.Path]::GetFullPath($src) -ne [System.IO.Path]::GetFullPath($destFile))) {
+              Copy-Item -Path $src -Destination $destFile -Force
+              Write-Host "Staged relay binary $rf from build tree -> $relayDestDir"
+            } else {
+              throw "Required relay binary missing from build output: $destFile"
+            }
+          }
+
+          # 4. Verification checks before zip compression
+          Write-Host "`n=== Pre-Packaging Artifact Verification ==="
+          $requiredRootFiles = @(
+            "opentrack.exe",
+            "adb.exe",
+            "AdbWinApi.dll",
+            "AdbWinUsbApi.dll"
+          )
+          $verificationFailed = $false
+          foreach ($rf in $requiredRootFiles) {
+            $target = Join-Path $install $rf
+            if (-not (Test-Path $target)) {
+              Write-Error "[FAIL] Missing required root artifact: $target"
+              $verificationFailed = $true
+            } else {
+              $item = Get-Item $target
+              if ($item.Length -le 0) {
+                Write-Error "[FAIL] Required artifact is 0-byte: $target"
+                $verificationFailed = $true
+              } else {
+                Write-Host "  [OK] $rf ($($item.Length) bytes)"
+              }
+            }
+          }
+
+          foreach ($rf in $relayFiles) {
+            $target = Join-Path $install "modules\android\$rf"
+            if (-not (Test-Path $target)) {
+              Write-Error "[FAIL] Missing required relay artifact: $target"
+              $verificationFailed = $true
+            } else {
+              $item = Get-Item $target
+              if ($item.Length -le 0) {
+                Write-Error "[FAIL] Required artifact is 0-byte: $target"
+                $verificationFailed = $true
+              } else {
+                Write-Host "  [OK] modules\android\$rf ($($item.Length) bytes)"
+              }
+            }
+          }
+
+          $moduleDll = Join-Path $install "modules\opentrack-tracker-smoothtrack.dll"
+          if (Test-Path $moduleDll) {
+            $modItem = Get-Item $moduleDll
+            Write-Host "  [OK] modules\opentrack-tracker-smoothtrack.dll ($($modItem.Length) bytes)"
+          } else {
+            Write-Host "  [WARN] modules\opentrack-tracker-smoothtrack.dll not found in install tree"
+          }
+
+          if ($verificationFailed) {
+            throw "Pre-packaging verification failed: one or more required binaries are missing from $install"
+          }
+          Write-Host "All required root binaries verified successfully.`n"
+
+          # 5. Compress install tree into release zip
+          $zipPath = Join-Path $env:GITHUB_WORKSPACE "opentrack-windows11-x64.zip"
+          if (Test-Path $zipPath) {
+            Remove-Item $zipPath -Force
+          }
+          Write-Host "Compressing install directory into release archive: $zipPath..."
+          Compress-Archive -Path (Join-Path $install '*') -DestinationPath $zipPath -Force
+
+          # 6. Post-compression verification
+          if (-not (Test-Path $zipPath)) {
+            throw "Post-compression check failed: $zipPath does not exist"
+          }
+          $zipItem = Get-Item $zipPath
+          if ($zipItem.Length -le 0) {
+            throw "Post-compression check failed: $zipPath is 0-byte"
+          }
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zipArchive = [System.IO.Compression.ZipFile]::OpenRead($zipPath)
+          $entryCount = $zipArchive.Entries.Count
+          $zipArchive.Dispose()
+          if ($entryCount -le 0) {
+            throw "Post-compression check failed: $zipPath contains 0 entries"
+          }
+          Write-Host "Release archive successfully created and validated: $zipPath ($([math]::Round($zipItem.Length / 1MB, 2)) MB, $($zipItem.Length) bytes, $entryCount entries)"
 
       - name: Upload Windows 11 build artifact
         uses: actions/upload-artifact@v4
