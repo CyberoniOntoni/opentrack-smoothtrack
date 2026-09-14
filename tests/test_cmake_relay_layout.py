@@ -8,6 +8,8 @@ REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 CMAKE_FILE = os.path.join(REPO_ROOT, "tracker-smoothtrack", "CMakeLists.txt")
 WORKFLOW_FILE = os.path.join(REPO_ROOT, ".github", "workflows", "windows-11.yml")
 
+_SOURCE_RELAY_DIR = 'Join-Path $env:GITHUB_WORKSPACE "tracker-smoothtrack\\android"'
+
 
 def _ps_array_items(script: str, var_name: str):
     match = re.search(rf"\${var_name}\s*=\s*@\((.*?)\)", script, re.S)
@@ -19,6 +21,22 @@ def _ps_array_items(script: str, var_name: str):
         if line:
             items.append(line)
     return items
+
+
+def _workflow_step(name: str) -> str:
+    with open(WORKFLOW_FILE, encoding="utf-8") as f:
+        text = f.read()
+    marker = f"- name: {name}"
+    start = text.find(marker)
+    if start < 0:
+        raise AssertionError(f"step {name!r} not found")
+    run_at = text.find("run: |", start)
+    if run_at < 0:
+        raise AssertionError(f"run block for {name!r} not found")
+    body_start = text.find("\n", run_at) + 1
+    rest = text[body_start:]
+    next_step = re.search(r"\n      - name:", rest)
+    return rest if not next_step else rest[: next_step.start()]
 
 
 class TestCMakeRelayLayout(unittest.TestCase):
@@ -43,16 +61,19 @@ class TestCMakeRelayLayout(unittest.TestCase):
             f"adb trio must copy to exactly one destination (install root), got {adb_dests}",
         )
 
-        relay_dests = _ps_array_items(text, "relayDests")
-        self.assertEqual(len(relay_dests), 1, f"relays must copy once, got {relay_dests}")
-        dest = relay_dests[0]
-        self.assertRegex(
-            dest,
-            r'modules[\\/]android',
-            f"relays must copy to modules\\android, got {dest}",
-        )
-        self.assertNotEqual(dest, "$install")
-        self.assertNotIn('Join-Path $install "android"', dest)
+        package = _workflow_step("Package install tree")
+        self.assertNotIn(_SOURCE_RELAY_DIR, package)
+        self.assertIn("modules\\android", package)
+        self.assertIn("build\\tracker-smoothtrack\\android", package)
+
+    def test_compile_step_exports_ndk_and_does_not_write_source_tree_relays(self):
+        compile_step = _workflow_step("Compile Android SmoothTrack USB relay daemon")
+        self.assertNotIn(_SOURCE_RELAY_DIR, compile_step)
+        self.assertNotIn('Join-Path $relayDir "st-relay-arm64"', compile_step)
+        self.assertNotIn('Join-Path $relayDir "st-relay-armv7"', compile_step)
+        self.assertNotIn("-static", compile_step)
+        self.assertIn("GITHUB_ENV", compile_step)
+        self.assertIn("ANDROID_NDK_ROOT", compile_step)
 
 
 if __name__ == "__main__":

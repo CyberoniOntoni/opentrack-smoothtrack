@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Script to cross-compile relay.c for Android using the Android NDK.
-# CMake is canonical; this helper writes to OUT_DIR (default: alongside the script in out/).
+# Script to cross-compile relay.c for Android using the Android NDK
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

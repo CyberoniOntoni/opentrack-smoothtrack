@@ -464,12 +464,20 @@ class TestR4CIWorkflowAndPackagingStress(unittest.TestCase):
         compile_step = next(s for s in steps if s.get("name") == "Compile Android SmoothTrack USB relay daemon")
         compile_script = compile_step["run"]
 
-        self.assertIn("st-relay-arm64", compile_script)
-        self.assertIn("st-relay-armv7", compile_script)
+        self.assertIn("ANDROID_NDK_ROOT", compile_script)
+        self.assertIn("GITHUB_ENV", compile_script)
         self.assertIn("aarch64-linux-android", compile_script)
         self.assertIn("armv7a-linux-androideabi", compile_script)
-        self.assertIn("-static", compile_script)
-        self.assertIn("-O2", compile_script)
+        self.assertNotIn(
+            'Join-Path $env:GITHUB_WORKSPACE "tracker-smoothtrack\\android"',
+            compile_script,
+        )
+
+        cmake_path = os.path.join(SMOOTHTRACK_DIR, "CMakeLists.txt")
+        with open(cmake_path, encoding="utf-8") as f:
+            cmake_text = f.read()
+        self.assertIn("-static", cmake_text)
+        self.assertIn("-O2", cmake_text)
 
     def test_r4_relay_c_source_code_integrity(self):
         """Verify android relay sources adhere to POSIX sockets and bounded buffers."""
@@ -498,7 +506,7 @@ class TestR4CIWorkflowAndPackagingStress(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             workspace = os.path.join(td, "workspace")
             install_dir = os.path.join(workspace, "build", "install")
-            relay_dir = os.path.join(workspace, "tracker-smoothtrack", "android")
+            relay_dir = os.path.join(install_dir, "modules", "android")
             pt_dir = os.path.join(td, "platform-tools")
             os.makedirs(install_dir, exist_ok=True)
             os.makedirs(relay_dir, exist_ok=True)
@@ -508,7 +516,7 @@ class TestR4CIWorkflowAndPackagingStress(unittest.TestCase):
             with open(os.path.join(install_dir, "opentrack.exe"), "wb") as f:
                 f.write(b"MOCK_OPENTRACK_EXE" * 100)
 
-            # Create mock relay binaries
+            # Relays as CMake would install them
             with open(os.path.join(relay_dir, "st-relay-arm64"), "wb") as f:
                 f.write(b"MOCK_ARM64_RELAY" * 50)
             with open(os.path.join(relay_dir, "st-relay-armv7"), "wb") as f:

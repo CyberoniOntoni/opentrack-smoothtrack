@@ -134,35 +134,12 @@ jobs:
           Write-Host "aarch64 compiler: $clang64"
           Write-Host "armv7a compiler:  $clang32"
 
-          # 3. Source and output paths
-          $relayDir = Join-Path $env:GITHUB_WORKSPACE "tracker-smoothtrack\android"
-          $relaySrc = Join-Path $relayDir "relay.c"
-          $out64 = Join-Path $relayDir "st-relay-arm64"
-          $out32 = Join-Path $relayDir "st-relay-armv7"
-
-          # Purge any stale binaries before cross-compilation
-          if (Test-Path $out64) { Remove-Item $out64 -Force }
-          if (Test-Path $out32) { Remove-Item $out32 -Force }
-
-          if (-not (Test-Path $relaySrc)) { throw "Relay source not found at $relaySrc" }
-
-          # 4. Cross-compile st-relay-arm64
-          Write-Host "Building st-relay-arm64..."
-          & $clang64 -O2 -Wall -Wextra -static "$relaySrc" -o "$out64"
-          if ($LASTEXITCODE -ne 0) { throw "Failed to compile st-relay-arm64 (exit code: $LASTEXITCODE)" }
-          if (-not (Test-Path $out64)) { throw "Output st-relay-arm64 not found at $out64" }
-          $s64 = (Get-Item $out64).Length
-          if ($s64 -le 0) { throw "Output st-relay-arm64 is 0-byte at $out64" }
-          Write-Host "Built st-relay-arm64 ($s64 bytes) successfully."
-
-          # 5. Cross-compile st-relay-armv7
-          Write-Host "Building st-relay-armv7..."
-          & $clang32 -O2 -Wall -Wextra -static "$relaySrc" -o "$out32"
-          if ($LASTEXITCODE -ne 0) { throw "Failed to compile st-relay-armv7 (exit code: $LASTEXITCODE)" }
-          if (-not (Test-Path $out32)) { throw "Output st-relay-armv7 not found at $out32" }
-          $s32 = (Get-Item $out32).Length
-          if ($s32 -le 0) { throw "Output st-relay-armv7 is 0-byte at $out32" }
-          Write-Host "Built st-relay-armv7 ($s32 bytes) successfully."
+          # CMake custom commands compile st-relay into the build tree.
+          if ($env:GITHUB_ENV) {
+            Add-Content -LiteralPath $env:GITHUB_ENV -Value "ANDROID_NDK_ROOT=$ndk"
+          }
+          $env:ANDROID_NDK_ROOT = $ndk
+          Write-Host "Exported ANDROID_NDK_ROOT=$ndk for CMake st-relay-android"
 
       - name: Configure (MSVC via build-windows.bat)
         shell: pwsh
@@ -261,7 +238,6 @@ jobs:
           Write-Host "ADB platform-tools located at: $ptFound"
 
           # 2. Bundle ADB tools (adb.exe, AdbWinApi.dll, AdbWinUsbApi.dll)
-          # Canonical destination: ${opentrack-bin} (install root)
           $adbDests = @(
             $install
           )
@@ -284,38 +260,26 @@ jobs:
             }
           }
 
-          # 3. Stage relay binaries (st-relay-arm64, st-relay-armv7)
-          # Canonical destination: ${opentrack-libexec}/android
           $relayFiles = @("st-relay-arm64", "st-relay-armv7")
-          $relaySrcDir = Join-Path $env:GITHUB_WORKSPACE "tracker-smoothtrack\android"
-          $relayDests = @(
-            (Join-Path $install "modules\android")
-          )
+          $relayDestDir = Join-Path $install "modules\android"
+          $relayBuildDir = Join-Path $env:GITHUB_WORKSPACE "build\tracker-smoothtrack\android"
 
-          foreach ($dest in $relayDests) {
-            if (-not (Test-Path $dest)) {
-              New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          if (-not (Test-Path $relayDestDir)) {
+            New-Item -ItemType Directory -Force -Path $relayDestDir | Out-Null
+          }
+
+          foreach ($rf in $relayFiles) {
+            $destFile = Join-Path $relayDestDir $rf
+            if (Test-Path $destFile) {
+              Write-Host "Relay $rf already installed at $destFile"
+              continue
             }
-            foreach ($rf in $relayFiles) {
-              $src = Join-Path $relaySrcDir $rf
-              $destFile = Join-Path $dest $rf
-              if (Test-Path $src) {
-                if (-not (Test-Path $destFile) -or ([System.IO.Path]::GetFullPath($src) -ne [System.IO.Path]::GetFullPath($destFile))) {
-                  Copy-Item -Path $src -Destination $dest -Force
-                }
-                Write-Host "Staged relay binary $rf -> $dest"
-              } else {
-                # Fallback check if CMake already staged it into install tree
-                $altSrc = Join-Path $install $rf
-                if (Test-Path $altSrc) {
-                  if (-not (Test-Path $destFile) -or ([System.IO.Path]::GetFullPath($altSrc) -ne [System.IO.Path]::GetFullPath($destFile))) {
-                    Copy-Item -Path $altSrc -Destination $dest -Force
-                  }
-                  Write-Host "Staged relay binary $rf (from install root) -> $dest"
-                } else {
-                  throw "Required relay binary missing from build output: $src"
-                }
-              }
+            $src = Join-Path $relayBuildDir $rf
+            if ((Test-Path $src) -and ([System.IO.Path]::GetFullPath($src) -ne [System.IO.Path]::GetFullPath($destFile))) {
+              Copy-Item -Path $src -Destination $destFile -Force
+              Write-Host "Staged relay binary $rf from build tree -> $relayDestDir"
+            } else {
+              throw "Required relay binary missing from build output: $destFile"
             }
           }
 

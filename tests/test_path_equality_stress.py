@@ -158,8 +158,8 @@ class TestPathEqualityStress(unittest.TestCase):
             os.makedirs(ws, exist_ok=True)
             install_dir = os.path.join(ws, "build", "install")
             os.makedirs(os.path.join(install_dir, "modules"), exist_ok=True)
-            android_src = os.path.join(ws, "tracker-smoothtrack", "android")
-            os.makedirs(android_src, exist_ok=True)
+            relay_dest = os.path.join(install_dir, "modules", "android")
+            os.makedirs(relay_dest, exist_ok=True)
             mock_sdk = os.path.join(base_tmp, "mock sdk with spaces", "platform-tools")
             os.makedirs(mock_sdk, exist_ok=True)
 
@@ -167,9 +167,9 @@ class TestPathEqualityStress(unittest.TestCase):
                 f.write(b"OPENTRACK_EXE" * 10)
             with open(os.path.join(install_dir, "modules", "opentrack-tracker-smoothtrack.dll"), "wb") as f:
                 f.write(b"SMOOTHTRACK_DLL" * 10)
-            with open(os.path.join(android_src, "st-relay-arm64"), "wb") as f:
+            with open(os.path.join(relay_dest, "st-relay-arm64"), "wb") as f:
                 f.write(b"ARM64" * 10)
-            with open(os.path.join(android_src, "st-relay-armv7"), "wb") as f:
+            with open(os.path.join(relay_dest, "st-relay-armv7"), "wb") as f:
                 f.write(b"ARMV7" * 10)
             with open(os.path.join(mock_sdk, "adb.exe"), "wb") as f:
                 f.write(b"ADB" * 10)
@@ -198,16 +198,16 @@ class TestPathEqualityStress(unittest.TestCase):
             os.makedirs(ws, exist_ok=True)
             install_dir = os.path.join(ws, "build", "install")
             os.makedirs(os.path.join(install_dir, "modules"), exist_ok=True)
-            android_src = os.path.join(ws, "tracker-smoothtrack", "android")
-            os.makedirs(android_src, exist_ok=True)
+            relay_dest = os.path.join(install_dir, "modules", "android")
+            os.makedirs(relay_dest, exist_ok=True)
             mock_sdk = os.path.join(base_tmp, "mock_sdk", "platform-tools")
             os.makedirs(mock_sdk, exist_ok=True)
 
             with open(os.path.join(install_dir, "opentrack.exe"), "wb") as f:
                 f.write(b"OPENTRACK" * 10)
-            with open(os.path.join(android_src, "st-relay-arm64"), "wb") as f:
+            with open(os.path.join(relay_dest, "st-relay-arm64"), "wb") as f:
                 f.write(b"ARM64" * 10)
-            with open(os.path.join(android_src, "st-relay-armv7"), "wb") as f:
+            with open(os.path.join(relay_dest, "st-relay-armv7"), "wb") as f:
                 f.write(b"ARMV7" * 10)
             with open(os.path.join(mock_sdk, "adb.exe"), "wb") as f:
                 f.write(b"ADB" * 10)
@@ -232,16 +232,16 @@ class TestPathEqualityStress(unittest.TestCase):
             os.makedirs(ws, exist_ok=True)
             install_dir = os.path.join(ws, "build", "install")
             os.makedirs(os.path.join(install_dir, "modules"), exist_ok=True)
-            android_src = os.path.join(ws, "tracker-smoothtrack", "android")
-            os.makedirs(android_src, exist_ok=True)
+            relay_dest = os.path.join(install_dir, "modules", "android")
+            os.makedirs(relay_dest, exist_ok=True)
             mock_sdk = os.path.join(base_tmp, "mock_sdk", "platform-tools")
             os.makedirs(mock_sdk, exist_ok=True)
 
             with open(os.path.join(install_dir, "opentrack.exe"), "wb") as f:
                 f.write(b"OPENTRACK" * 10)
-            with open(os.path.join(android_src, "st-relay-arm64"), "wb") as f:
+            with open(os.path.join(relay_dest, "st-relay-arm64"), "wb") as f:
                 f.write(b"ARM64" * 10)
-            with open(os.path.join(android_src, "st-relay-armv7"), "wb") as f:
+            with open(os.path.join(relay_dest, "st-relay-armv7"), "wb") as f:
                 f.write(b"ARMV7" * 10)
             with open(os.path.join(mock_sdk, "adb.exe"), "wb") as f:
                 f.write(b"ADB" * 10)
@@ -274,9 +274,11 @@ class TestPathEqualityStress(unittest.TestCase):
 
             with open(os.path.join(install_dir, "opentrack.exe"), "wb") as f:
                 f.write(b"OPENTRACK" * 10)
-            with open(os.path.join(install_dir, "st-relay-arm64"), "wb") as f:
+            relay_dest = os.path.join(install_dir, "modules", "android")
+            os.makedirs(relay_dest, exist_ok=True)
+            with open(os.path.join(relay_dest, "st-relay-arm64"), "wb") as f:
                 f.write(b"ARM64" * 10)
-            with open(os.path.join(install_dir, "st-relay-armv7"), "wb") as f:
+            with open(os.path.join(relay_dest, "st-relay-armv7"), "wb") as f:
                 f.write(b"ARMV7" * 10)
             with open(os.path.join(mock_sdk, "adb.exe"), "wb") as f:
                 f.write(b"ADB" * 10)
@@ -304,14 +306,14 @@ class TestPathEqualityStress(unittest.TestCase):
             install_dir = os.path.join(ws, "build", "install")
             pt_dir = os.path.join(install_dir, "platform-tools")
             os.makedirs(pt_dir, exist_ok=True)
-            android_src = os.path.join(ws, "tracker-smoothtrack", "android")
-            os.makedirs(android_src, exist_ok=True)
+            relay_dest = os.path.join(install_dir, "modules", "android")
+            os.makedirs(relay_dest, exist_ok=True)
 
             with open(os.path.join(install_dir, "opentrack.exe"), "wb") as f:
                 f.write(b"OPENTRACK" * 10)
-            with open(os.path.join(android_src, "st-relay-arm64"), "wb") as f:
+            with open(os.path.join(relay_dest, "st-relay-arm64"), "wb") as f:
                 f.write(b"ARM64" * 10)
-            with open(os.path.join(android_src, "st-relay-armv7"), "wb") as f:
+            with open(os.path.join(relay_dest, "st-relay-armv7"), "wb") as f:
                 f.write(b"ARMV7" * 10)
             with open(os.path.join(pt_dir, "adb.exe"), "wb") as f:
                 f.write(b"ADB" * 10)
