@@ -1,47 +1,49 @@
 # SmoothTrack USB tracker (iOS via libusbmuxd + Android via ADB Relay)
-find_package(PkgConfig QUIET)
+option(OPENTRACK_HAS_USBMUXD "Build SmoothTrack with iOS libusbmuxd support" ON)
 
 set(USBMUXD_FOUND FALSE)
 set(USBMUXD_TARGET "")
 
-if(PkgConfig_FOUND)
-    pkg_check_modules(USBMUXD QUIET IMPORTED_TARGET libusbmuxd-2.0)
-    if(TARGET PkgConfig::USBMUXD)
-        set(USBMUXD_FOUND TRUE)
-        set(USBMUXD_TARGET PkgConfig::USBMUXD)
+if(OPENTRACK_HAS_USBMUXD)
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(USBMUXD QUIET IMPORTED_TARGET libusbmuxd-2.0)
+        if(TARGET PkgConfig::USBMUXD)
+            set(USBMUXD_FOUND TRUE)
+            set(USBMUXD_TARGET PkgConfig::USBMUXD)
+        endif()
     endif()
-endif()
 
-# vcpkg provides an unofficial CMake package on Windows
-if(NOT USBMUXD_FOUND)
-    find_package(unofficial-libusbmuxd CONFIG QUIET)
-    if(TARGET unofficial::libusbmuxd::libusbmuxd)
-        set(USBMUXD_FOUND TRUE)
-        set(USBMUXD_TARGET unofficial::libusbmuxd::libusbmuxd)
+    # vcpkg provides an unofficial CMake package on Windows
+    if(NOT USBMUXD_FOUND)
+        find_package(unofficial-libusbmuxd CONFIG QUIET)
+        if(TARGET unofficial::libusbmuxd::libusbmuxd)
+            set(USBMUXD_FOUND TRUE)
+            set(USBMUXD_TARGET unofficial::libusbmuxd::libusbmuxd)
+        endif()
     endif()
-endif()
 
-if(NOT USBMUXD_FOUND)
-    find_path(USBMUXD_INCLUDE_DIR NAMES usbmuxd.h)
-    find_library(USBMUXD_LIBRARY NAMES usbmuxd usbmuxd-2.0 libusbmuxd)
-    if(USBMUXD_INCLUDE_DIR AND USBMUXD_LIBRARY)
-        set(USBMUXD_FOUND TRUE)
+    if(NOT USBMUXD_FOUND)
+        find_path(USBMUXD_INCLUDE_DIR NAMES usbmuxd.h)
+        find_library(USBMUXD_LIBRARY NAMES usbmuxd usbmuxd-2.0 libusbmuxd)
+        if(USBMUXD_INCLUDE_DIR AND USBMUXD_LIBRARY)
+            set(USBMUXD_FOUND TRUE)
+        endif()
     endif()
 endif()
 
 otr_module(tracker-smoothtrack)
-
-target_sources(${self} PRIVATE
-    adb_client.cpp
-    adb_client.h
-)
 
 if(WIN32)
     target_link_libraries(${self} PRIVATE ws2_32)
 endif()
 
 if(USBMUXD_FOUND)
-    target_compile_definitions(${self} PRIVATE OPENTRACK_SMOOTHTRACK_HAVE_USBMUXD)
+    target_compile_definitions(${self} PRIVATE
+        OPENTRACK_SMOOTHTRACK_HAVE_USBMUXD
+        OPENTRACK_HAS_USBMUXD
+        BUILD_USBMUXD
+    )
 
     if(USBMUXD_TARGET)
         target_link_libraries(${self} PRIVATE ${USBMUXD_TARGET})
@@ -104,6 +106,9 @@ set(_relay_bins
 )
 foreach(_relay_bin IN LISTS _relay_bins)
     if(EXISTS "${_relay_bin}")
+        install(FILES "${_relay_bin}"
+                DESTINATION "${opentrack-bin}"
+                PERMISSIONS ${opentrack-perms-exec})
         install(FILES "${_relay_bin}"
                 DESTINATION "${opentrack-libexec}/android"
                 PERMISSIONS ${opentrack-perms-exec})

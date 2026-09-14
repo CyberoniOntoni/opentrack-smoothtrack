@@ -184,7 +184,7 @@ module_status smoothtrack::start_tracker(QFrame*)
 
 void smoothtrack::run()
 {
-    while (!isInterruptionRequested() && sock && sock->isValid())
+    while (!isInterruptionRequested() && sock && sock->state() == QAbstractSocket::ConnectedState)
     {
         if (!sock->waitForReadyRead(100))
         {
@@ -195,6 +195,15 @@ void smoothtrack::run()
             }
             continue;
         }
+
+        if (sock->state() != QAbstractSocket::ConnectedState)
+        {
+            qDebug() << "smoothtrack: socket disconnected:" << sock->errorString();
+            break;
+        }
+
+        bool has_new_pose = false;
+        double latest_pose[6]{};
 
         while (sock->bytesAvailable() >= static_cast<qint64>(sizeof(double[6])))
         {
@@ -217,10 +226,17 @@ void smoothtrack::run()
 
             if (ok)
             {
-                QMutexLocker lock(&mutex);
                 for (unsigned i = 0; i < 6; i++)
-                    last_recv_pose[i] = pose[i];
+                    latest_pose[i] = pose[i];
+                has_new_pose = true;
             }
+        }
+
+        if (has_new_pose)
+        {
+            QMutexLocker lock(&mutex);
+            for (unsigned i = 0; i < 6; i++)
+                last_recv_pose[i] = latest_pose[i];
         }
     }
 

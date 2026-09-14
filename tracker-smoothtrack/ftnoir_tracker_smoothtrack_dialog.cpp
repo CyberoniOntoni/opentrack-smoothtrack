@@ -9,6 +9,8 @@
 #include "ftnoir_tracker_smoothtrack.h"
 #include "api/plugin-api.hpp"
 
+#include <QStandardItemModel>
+
 dialog_smoothtrack::dialog_smoothtrack()
 {
     ui.setupUi(this);
@@ -28,6 +30,20 @@ dialog_smoothtrack::dialog_smoothtrack()
     connect(ui.comboPlatform, SIGNAL(currentIndexChanged(int)),
             ui.stackedSettings, SLOT(setCurrentIndex(int)));
     ui.stackedSettings->setCurrentIndex(int(s.platform));
+
+#if !defined(OPENTRACK_SMOOTHTRACK_HAVE_USBMUXD)
+    ui.comboPlatform->setItemText(PLATFORM_IOS, tr("iOS (Apple USB via usbmuxd) [Not compiled]"));
+    if (auto* model = qobject_cast<QStandardItemModel*>(ui.comboPlatform->model()))
+    {
+        if (auto* item = model->item(PLATFORM_IOS))
+            item->setEnabled(false);
+    }
+    if (int(s.platform) == PLATFORM_IOS)
+    {
+        ui.comboPlatform->setCurrentIndex(PLATFORM_ANDROID);
+    }
+    ui.pageIOS->setEnabled(false);
+#endif
 }
 
 void dialog_smoothtrack::doOK()
@@ -38,5 +54,6 @@ void dialog_smoothtrack::doOK()
 
 void dialog_smoothtrack::doCancel()
 {
+    s.b->reload();
     close();
 }

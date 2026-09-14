@@ -17,6 +17,10 @@
 class adb_client
 {
 public:
+    // Explicit bounded execution timeouts (in milliseconds) to prevent UI/tracker deadlocks
+    static constexpr int DEFAULT_TIMEOUT_MS = 2000;
+    static constexpr int QUICK_TIMEOUT_MS   = 1000;
+
     struct device_info
     {
         QString serial;

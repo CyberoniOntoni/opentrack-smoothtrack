@@ -9,3 +9,6 @@
 .gtm/
 .vscode
 .history
+.agents/
+__pycache__/
+*.pyc

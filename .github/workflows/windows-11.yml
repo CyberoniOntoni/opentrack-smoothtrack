@@ -66,36 +66,99 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             Write-Host "libusbmuxd install failed; SmoothTrack USB module will be skipped"
           }
-      - name: Build Android relay binaries (optional)
+      - name: Compile Android SmoothTrack USB relay daemon
         shell: pwsh
         run: |
-          $ErrorActionPreference = 'Continue'
-          $ndk = $env:ANDROID_NDK_LATEST_HOME
-          if (-not $ndk -or -not (Test-Path $ndk)) { $ndk = $env:ANDROID_NDK_ROOT }
-          if (-not $ndk -or -not (Test-Path $ndk)) {
-            $candidate = Get-ChildItem "C:\Program Files (x86)\Android\android-sdk\ndk" -Directory -ErrorAction SilentlyContinue |
-              Sort-Object Name -Descending | Select-Object -First 1
-            if ($candidate) { $ndk = $candidate.FullName }
-          }
-          if ($ndk -and (Test-Path $ndk)) {
-            Write-Host "Android NDK located at: $ndk"
-            $llvmBin = Join-Path $ndk "toolchains\llvm\prebuilt\windows-x86_64\bin"
-            $clang64 = Join-Path $llvmBin "aarch64-linux-android24-clang.cmd"
-            $clang32 = Join-Path $llvmBin "armv7a-linux-androideabi24-clang.cmd"
-            $relaySrc = Join-Path $env:GITHUB_WORKSPACE "tracker-smoothtrack\android\relay.c"
-            $out64 = Join-Path $env:GITHUB_WORKSPACE "tracker-smoothtrack\android\st-relay-arm64"
-            $out32 = Join-Path $env:GITHUB_WORKSPACE "tracker-smoothtrack\android\st-relay-armv7"
-            if (Test-Path $clang64) {
-              Write-Host "Building st-relay-arm64..."
-              & $clang64 -O2 -Wall -static "$relaySrc" -o "$out64"
+          $ErrorActionPreference = 'Stop'
+
+          # 1. Discover Android NDK
+          $cands = @()
+          if ($env:ANDROID_NDK_LATEST_HOME) { $cands += $env:ANDROID_NDK_LATEST_HOME }
+          if ($env:ANDROID_NDK_ROOT) { $cands += $env:ANDROID_NDK_ROOT }
+          if ($env:ANDROID_NDK_HOME) { $cands += $env:ANDROID_NDK_HOME }
+          if ($env:ANDROID_HOME) { $cands += (Join-Path $env:ANDROID_HOME "ndk") }
+          if ($env:ANDROID_SDK_ROOT) { $cands += (Join-Path $env:ANDROID_SDK_ROOT "ndk") }
+          $cands += "C:\Program Files (x86)\Android\android-sdk\ndk"
+          $cands += "C:\Android\android-sdk\ndk"
+          $cands += "C:\ProgramData\Android\android-sdk\ndk"
+          if ($env:LOCALAPPDATA) { $cands += (Join-Path $env:LOCALAPPDATA "Android\Sdk\ndk") }
+          $ndkCandidates = $cands | Where-Object { $_ -and (Test-Path $_) }
+
+          $ndk = $null
+          foreach ($cand in $ndkCandidates) {
+            # Direct NDK root containing toolchains
+            if (Test-Path (Join-Path $cand "toolchains\llvm\prebuilt\windows-x86_64\bin")) {
+              $ndk = $cand
+              break
             }
-            if (Test-Path $clang32) {
-              Write-Host "Building st-relay-armv7..."
-              & $clang32 -O2 -Wall -static "$relaySrc" -o "$out32"
+            # Parent NDK directory containing versioned subdirectories
+            $subDirs = Get-ChildItem -Path $cand -Directory -ErrorAction SilentlyContinue |
+              Sort-Object Name -Descending
+            foreach ($sub in $subDirs) {
+              if (Test-Path (Join-Path $sub.FullName "toolchains\llvm\prebuilt\windows-x86_64\bin")) {
+                $ndk = $sub.FullName
+                break
+              }
             }
-          } else {
-            Write-Host "Android NDK not found; skipping relay compilation"
+            if ($ndk) { break }
           }
+
+          if (-not $ndk) {
+            throw "Android NDK toolchain not found. Checked locations: $($ndkCandidates -join '; ')"
+          }
+          Write-Host "Android NDK located at: $ndk"
+
+          # 2. Locate LLVM toolchain bin directory
+          $llvmBin = Join-Path $ndk "toolchains\llvm\prebuilt\windows-x86_64\bin"
+          if (-not (Test-Path $llvmBin)) {
+            throw "LLVM toolchain bin directory not found at: $llvmBin"
+          }
+
+          # Target API 24 wrappers with dynamic fallback
+          $clang64 = Join-Path $llvmBin "aarch64-linux-android24-clang.cmd"
+          if (-not (Test-Path $clang64)) {
+            $c64 = Get-ChildItem -Path $llvmBin -Filter "aarch64-linux-android*-clang.cmd" -ErrorAction SilentlyContinue |
+              Sort-Object Name | Select-Object -First 1
+            if ($c64) { $clang64 = $c64.FullName }
+          }
+
+          $clang32 = Join-Path $llvmBin "armv7a-linux-androideabi24-clang.cmd"
+          if (-not (Test-Path $clang32)) {
+            $c32 = Get-ChildItem -Path $llvmBin -Filter "armv7a-linux-androideabi*-clang.cmd" -ErrorAction SilentlyContinue |
+              Sort-Object Name | Select-Object -First 1
+            if ($c32) { $clang32 = $c32.FullName }
+          }
+
+          if (-not (Test-Path $clang64)) { throw "aarch64 clang wrapper not found in $llvmBin" }
+          if (-not (Test-Path $clang32)) { throw "armv7a clang wrapper not found in $llvmBin" }
+          Write-Host "aarch64 compiler: $clang64"
+          Write-Host "armv7a compiler:  $clang32"
+
+          # 3. Source and output paths
+          $relayDir = Join-Path $env:GITHUB_WORKSPACE "tracker-smoothtrack\android"
+          $relaySrc = Join-Path $relayDir "relay.c"
+          $out64 = Join-Path $relayDir "st-relay-arm64"
+          $out32 = Join-Path $relayDir "st-relay-armv7"
+
+          if (-not (Test-Path $relaySrc)) { throw "Relay source not found at $relaySrc" }
+
+          # 4. Cross-compile st-relay-arm64
+          Write-Host "Building st-relay-arm64..."
+          & $clang64 -O2 -Wall -Wextra -static "$relaySrc" -o "$out64"
+          if ($LASTEXITCODE -ne 0) { throw "Failed to compile st-relay-arm64 (exit code: $LASTEXITCODE)" }
+          if (-not (Test-Path $out64)) { throw "Output st-relay-arm64 not found at $out64" }
+          $s64 = (Get-Item $out64).Length
+          if ($s64 -le 0) { throw "Output st-relay-arm64 is 0-byte at $out64" }
+          Write-Host "Built st-relay-arm64 ($s64 bytes) successfully."
+
+          # 5. Cross-compile st-relay-armv7
+          Write-Host "Building st-relay-armv7..."
+          & $clang32 -O2 -Wall -Wextra -static "$relaySrc" -o "$out32"
+          if ($LASTEXITCODE -ne 0) { throw "Failed to compile st-relay-armv7 (exit code: $LASTEXITCODE)" }
+          if (-not (Test-Path $out32)) { throw "Output st-relay-armv7 not found at $out32" }
+          $s32 = (Get-Item $out32).Length
+          if ($s32 -le 0) { throw "Output st-relay-armv7 is 0-byte at $out32" }
+          Write-Host "Built st-relay-armv7 ($s32 bytes) successfully."
 
       - name: Configure (MSVC via build-windows.bat)
         shell: pwsh
@@ -121,6 +184,7 @@ jobs:
       - name: Package install tree
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
           $install = Join-Path $env:GITHUB_WORKSPACE "build\install"
           if (-not (Test-Path $install)) {
             # Some generators place install under build/install; fall back to install prefix scan
@@ -134,18 +198,162 @@ jobs:
               throw "Install tree not found at $install"
             }
           }
-          # Bundle Android ADB tools from runner SDK if available
-          $ptPath = "C:\Program Files (x86)\Android\android-sdk\platform-tools"
-          if (Test-Path (Join-Path $ptPath "adb.exe")) {
-            $dest = Join-Path $install "libexec\opentrack"
-            if (-not (Test-Path $dest)) { $dest = $install }
-            Copy-Item -Path (Join-Path $ptPath "adb.exe") -Destination $dest -Force -ErrorAction SilentlyContinue
-            Copy-Item -Path (Join-Path $ptPath "AdbWinApi.dll") -Destination $dest -Force -ErrorAction SilentlyContinue
-            Copy-Item -Path (Join-Path $ptPath "AdbWinUsbApi.dll") -Destination $dest -Force -ErrorAction SilentlyContinue
-            Write-Host "Packaged ADB tools to $dest"
+
+          # 1. Locate ADB platform-tools directory from runner SDK
+          $ptCands = @()
+          $ptCands += "C:\Program Files (x86)\Android\android-sdk\platform-tools"
+          if ($env:ANDROID_HOME) { $ptCands += (Join-Path $env:ANDROID_HOME "platform-tools") }
+          if ($env:ANDROID_SDK_ROOT) { $ptCands += (Join-Path $env:ANDROID_SDK_ROOT "platform-tools") }
+          $ptCands += "C:\Android\android-sdk\platform-tools"
+          $ptCands += "C:\ProgramData\Android\android-sdk\platform-tools"
+          if ($env:LOCALAPPDATA) { $ptCands += (Join-Path $env:LOCALAPPDATA "Android\Sdk\platform-tools") }
+          $adbCmd = Get-Command adb.exe -ErrorAction SilentlyContinue
+          if ($adbCmd) {
+            $ptCands += (Split-Path -Parent $adbCmd.Source)
           }
-          Get-ChildItem $install | Select-Object Name, Mode
-          Compress-Archive -Path (Join-Path $install '*') -DestinationPath (Join-Path $env:GITHUB_WORKSPACE "opentrack-windows11-x64.zip") -Force
+          $ptCandidates = $ptCands | Where-Object { $_ -and (Test-Path $_) }
+
+          $ptFound = $null
+          foreach ($cand in $ptCandidates) {
+            if ($cand -and (Test-Path (Join-Path $cand "adb.exe"))) {
+              $ptFound = $cand
+              break
+            }
+          }
+
+          if (-not $ptFound) {
+            Write-Host "Platform-tools not found in SDK paths; downloading official Windows platform-tools package..."
+            $tempDir = if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { [System.IO.Path]::GetTempPath() }
+            $ptZip = Join-Path $tempDir "platform-tools.zip"
+            $ptExtract = Join-Path $tempDir "pt"
+            Invoke-WebRequest -Uri "https://dl.google.com/android/repository/platform-tools-latest-windows.zip" -OutFile $ptZip
+            Expand-Archive -Path $ptZip -DestinationPath $ptExtract -Force
+            $ptFound = Join-Path $ptExtract "platform-tools"
+          }
+
+          Write-Host "ADB platform-tools located at: $ptFound"
+
+          # 2. Bundle ADB tools (adb.exe, AdbWinApi.dll, AdbWinUsbApi.dll)
+          # Target destinations: $install (application root), $install\modules, $install\platform-tools
+          $adbFiles = @("adb.exe", "AdbWinApi.dll", "AdbWinUsbApi.dll")
+          $adbDests = @(
+            $install,
+            (Join-Path $install "modules"),
+            (Join-Path $install "platform-tools")
+          )
+
+          foreach ($dest in $adbDests) {
+            if (-not (Test-Path $dest)) {
+              New-Item -ItemType Directory -Force -Path $dest | Out-Null
+            }
+            foreach ($f in $adbFiles) {
+              $src = Join-Path $ptFound $f
+              $destFile = Join-Path $dest $f
+              if (Test-Path $src) {
+                if (-not (Test-Path $destFile) -or (Resolve-Path $src).Path -ne (Resolve-Path $destFile).Path) {
+                  Copy-Item -Path $src -Destination $dest -Force
+                }
+                Write-Host "Packaged ADB tool $f -> $dest"
+              } else {
+                throw "Required ADB file missing from $($ptFound): $f"
+              }
+            }
+          }
+
+          # 3. Stage relay binaries (st-relay-arm64, st-relay-armv7)
+          # Target destinations: $install (application root), $install\android, $install\modules\android
+          $relayFiles = @("st-relay-arm64", "st-relay-armv7")
+          $relaySrcDir = Join-Path $env:GITHUB_WORKSPACE "tracker-smoothtrack\android"
+          $relayDests = @(
+            $install,
+            (Join-Path $install "android"),
+            (Join-Path $install "modules\android")
+          )
+
+          foreach ($dest in $relayDests) {
+            if (-not (Test-Path $dest)) {
+              New-Item -ItemType Directory -Force -Path $dest | Out-Null
+            }
+            foreach ($rf in $relayFiles) {
+              $src = Join-Path $relaySrcDir $rf
+              $destFile = Join-Path $dest $rf
+              if (Test-Path $src) {
+                if (-not (Test-Path $destFile) -or (Resolve-Path $src).Path -ne (Resolve-Path $destFile).Path) {
+                  Copy-Item -Path $src -Destination $dest -Force
+                }
+                Write-Host "Staged relay binary $rf -> $dest"
+              } else {
+                # Fallback check if CMake already staged it into install tree
+                $altSrc = Join-Path $install $rf
+                if (Test-Path $altSrc) {
+                  if (-not (Test-Path $destFile) -or (Resolve-Path $altSrc).Path -ne (Resolve-Path $destFile).Path) {
+                    Copy-Item -Path $altSrc -Destination $dest -Force
+                  }
+                  Write-Host "Staged relay binary $rf (from install root) -> $dest"
+                } else {
+                  throw "Required relay binary missing from build output: $src"
+                }
+              }
+            }
+          }
+
+          # 4. Verification checks before zip compression
+          Write-Host "`n=== Pre-Packaging Artifact Verification ==="
+          $requiredRootFiles = @(
+            "opentrack.exe",
+            "adb.exe",
+            "AdbWinApi.dll",
+            "AdbWinUsbApi.dll",
+            "st-relay-arm64",
+            "st-relay-armv7"
+          )
+          $verificationFailed = $false
+          foreach ($rf in $requiredRootFiles) {
+            $target = Join-Path $install $rf
+            if (-not (Test-Path $target)) {
+              Write-Error "[FAIL] Missing required root artifact: $target"
+              $verificationFailed = $true
+            } else {
+              $item = Get-Item $target
+              if ($item.Length -le 0) {
+                Write-Error "[FAIL] Required artifact is 0-byte: $target"
+                $verificationFailed = $true
+              } else {
+                Write-Host "  [OK] $rf ($($item.Length) bytes)"
+              }
+            }
+          }
+
+          $moduleDll = Join-Path $install "modules\opentrack-tracker-smoothtrack.dll"
+          if (Test-Path $moduleDll) {
+            $modItem = Get-Item $moduleDll
+            Write-Host "  [OK] modules\opentrack-tracker-smoothtrack.dll ($($modItem.Length) bytes)"
+          } else {
+            Write-Host "  [WARN] modules\opentrack-tracker-smoothtrack.dll not found in install tree"
+          }
+
+          if ($verificationFailed) {
+            throw "Pre-packaging verification failed: one or more required binaries are missing from $install"
+          }
+          Write-Host "All required root binaries verified successfully.`n"
+
+          # 5. Compress install tree into release zip
+          $zipPath = Join-Path $env:GITHUB_WORKSPACE "opentrack-windows11-x64.zip"
+          if (Test-Path $zipPath) {
+            Remove-Item $zipPath -Force
+          }
+          Write-Host "Compressing install directory into release archive: $zipPath..."
+          Compress-Archive -Path (Join-Path $install '*') -DestinationPath $zipPath -Force
+
+          # 6. Post-compression verification
+          if (-not (Test-Path $zipPath)) {
+            throw "Post-compression check failed: $zipPath does not exist"
+          }
+          $zipItem = Get-Item $zipPath
+          if ($zipItem.Length -le 0) {
+            throw "Post-compression check failed: $zipPath is 0-byte"
+          }
+          Write-Host "Release archive successfully created: $zipPath ($([math]::Round($zipItem.Length / 1MB, 2)) MB, $($zipItem.Length) bytes)"
 
       - name: Upload Windows 11 build artifact
         uses: actions/upload-artifact@v4

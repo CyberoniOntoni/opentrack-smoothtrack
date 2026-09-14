@@ -43,7 +43,11 @@ struct settings : opts
 
     settings()
         : opts("smoothtrack-tracker")
+#if defined(OPENTRACK_SMOOTHTRACK_HAVE_USBMUXD)
         , platform(b, "platform", PLATFORM_IOS)
+#else
+        , platform(b, "platform", PLATFORM_ANDROID)
+#endif
         , port(b, "port", 47047)
         , android_port(b, "android-port", 4242)
         , adb_path(b, "adb-path", "")
@@ -70,7 +74,7 @@ private:
     module_status start_ios();
     module_status start_android();
 
-    QTcpSocket sock;
+    std::unique_ptr<QTcpSocket> sock;
     QTcpServer server;
     std::unique_ptr<adb_client> adb;
     double last_recv_pose[6]{};
