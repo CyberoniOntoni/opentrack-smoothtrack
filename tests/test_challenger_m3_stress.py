@@ -472,10 +472,12 @@ class TestR4CIWorkflowAndPackagingStress(unittest.TestCase):
         self.assertIn("-O2", compile_script)
 
     def test_r4_relay_c_source_code_integrity(self):
-        """Verify tracker-smoothtrack/android/relay.c adheres to POSIX sockets and bounded buffers."""
-        relay_c = os.path.join(SMOOTHTRACK_DIR, "android", "relay.c")
-        with open(relay_c, "r", encoding="utf-8") as f:
-            src = f.read()
+        """Verify android relay sources adhere to POSIX sockets and bounded buffers."""
+        src = ""
+        for name in ("relay.c", "relay_io.h"):
+            path = os.path.join(SMOOTHTRACK_DIR, "android", name)
+            with open(path, "r", encoding="utf-8") as f:
+                src += f.read()
 
         self.assertIn("PACKET_SIZE 48", src)
         self.assertIn("MAX_BUFFER", src)

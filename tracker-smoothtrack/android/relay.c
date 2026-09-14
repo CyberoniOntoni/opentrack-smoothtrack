@@ -14,9 +14,7 @@
 #include <errno.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
-#include <netinet/tcp.h>
 #include <sys/socket.h>
-#include <poll.h>
 
 #include "relay_io.h"
 
@@ -111,44 +109,7 @@ int main(int argc, char* argv[])
     char buf[MAX_BUFFER];
     while (running)
     {
-        struct pollfd pfds[2];
-        pfds[0].fd = udp_fd;
-        pfds[0].events = POLLIN;
-        pfds[0].revents = 0;
-        pfds[1].fd = tcp_fd;
-        pfds[1].events = POLLIN;
-        pfds[1].revents = 0;
-
-        int pr = poll(pfds, 2, -1);
-        if (pr < 0)
-        {
-            if (errno == EINTR)
-                continue;
-            break;
-        }
-
-        if (pfds[1].revents & (POLLHUP | POLLERR | POLLNVAL))
-            break;
-        if (pfds[1].revents & POLLIN)
-        {
-            char dummy;
-            ssize_t r = recv(tcp_fd, &dummy, 1, 0);
-            if (r <= 0)
-                break;
-        }
-
-        if (!(pfds[0].revents & POLLIN))
-            continue;
-
-        ssize_t n = recv(udp_fd, buf, sizeof(buf), 0);
-        if (n <= 0)
-        {
-            if (n < 0 && errno == EINTR)
-                continue;
-            break;
-        }
-
-        if (send_all(tcp_fd, buf, (size_t)n) != 0)
+        if (relay_poll_once(udp_fd, tcp_fd, buf, sizeof(buf)) <= 0)
             break;
     }
 
