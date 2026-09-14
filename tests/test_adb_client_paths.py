@@ -8,12 +8,6 @@ ADB_H = os.path.join(REPO_ROOT, "tracker-smoothtrack", "adb_client.h")
 ADB_CPP = os.path.join(REPO_ROOT, "tracker-smoothtrack", "adb_client.cpp")
 TRACKER_CPP = os.path.join(REPO_ROOT, "tracker-smoothtrack", "ftnoir_tracker_smoothtrack.cpp")
 
-# tests/e2e_smoothtrack/test_adb_lifecycle_stress.py still asserts
-# DEFAULT_TIMEOUT_MS = 2000 and QUICK_TIMEOUT_MS = 1000. That suite is PR 5
-# theater and is not updated here; unittest discover of e2e will fail on those
-# literals until PR 5.
-
-
 def _function_source(text: str, signature: str) -> str:
     start = text.find(signature)
     if start < 0:

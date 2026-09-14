@@ -6,26 +6,16 @@ Empirical challenger validation for Milestone 2.
 import os
 import re
 import sys
-import shutil
 import tempfile
 import zipfile
 import subprocess
 import unittest
-import yaml
 
-REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-WORKFLOW_FILE = os.path.join(REPO_ROOT, ".github", "workflows", "windows-11.yml")
+_TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
+if _TESTS_DIR not in sys.path:
+    sys.path.insert(0, _TESTS_DIR)
 
-
-def extract_workflow_step(step_name: str) -> str:
-    """Extract the exact PowerShell script text from a named workflow step."""
-    with open(WORKFLOW_FILE, "r", encoding="utf-8") as f:
-        data = yaml.safe_load(f)
-    steps = data["jobs"]["windows-11-x64"]["steps"]
-    for s in steps:
-        if s.get("name") == step_name:
-            return s.get("run", "")
-    raise ValueError(f"Step '{step_name}' not found in {WORKFLOW_FILE}")
+from extract import REPO_ROOT, extract_workflow_step
 
 
 def write_installed_relays(install_dir, arm64=b"ARM64" * 10, armv7=b"ARMV7" * 10):
