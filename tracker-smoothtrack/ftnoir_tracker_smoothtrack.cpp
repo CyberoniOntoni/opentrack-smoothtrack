@@ -143,17 +143,27 @@ module_status smoothtrack::start_android()
         return error(err_detail);
     }
 
-    // Wait for Android relay to establish TCP reverse connection
+    if (!adb->is_running())
+    {
+        const QString detail = adb->relay_stderr();
+        server.close();
+        adb->stop();
+        adb.reset();
+        return error(detail.isEmpty() ? tr("st-relay is not running") : detail);
+    }
+
     if (!server.waitForNewConnection(7000))
     {
         server.close();
         if (adb)
             adb->stop();
         adb.reset();
-        return error(tr("Timed out waiting for Android relay connection.\n"
-                        "1. Ensure SmoothTrack is active on phone\n"
-                        "2. Destination IP must be 127.0.0.1 and Port %1\n"
-                        "3. Tap Play in SmoothTrack").arg(port));
+        return error(tr("Timed out waiting for st-relay to connect over ADB reverse (tcp:%1).\n"
+                        "1. USB debugging authorized\n"
+                        "2. adb reverse and st-relay started (see details if present)\n"
+                        "3. Phone SmoothTrack destination 127.0.0.1:%1 is for UDP after the relay is up, not for this step")
+                         .arg(port)
+                         .arg(port));
     }
 
     QTcpSocket* client = server.nextPendingConnection();
