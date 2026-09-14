@@ -11,11 +11,13 @@ import zipfile
 import subprocess
 import unittest
 
+import yaml
+
 _TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
 if _TESTS_DIR not in sys.path:
     sys.path.insert(0, _TESTS_DIR)
 
-from extract import REPO_ROOT, extract_workflow_step
+from extract import REPO_ROOT, WORKFLOW_FILE, extract_workflow_step
 
 
 def write_installed_relays(install_dir, arm64=b"ARM64" * 10, armv7=b"ARMV7" * 10):
