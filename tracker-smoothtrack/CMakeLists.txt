@@ -115,8 +115,9 @@ set(_st_relay_dir "${CMAKE_CURRENT_BINARY_DIR}/android")
 file(MAKE_DIRECTORY "${_st_relay_dir}")
 
 set(_st_clang "")
-set(_st_llvm_bin_candidates "")
 if(_st_ndk)
+    # msvc.cmake sets CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER, so find_program
+    # cannot see the NDK. Locate clang by path existence instead.
     set(_st_llvm_bin_candidates
         "${_st_ndk}/toolchains/llvm/prebuilt/windows-x86_64/bin"
         "${_st_ndk}/toolchains/llvm/prebuilt/linux-x86_64/bin"
@@ -124,11 +125,19 @@ if(_st_ndk)
         "${_st_ndk}/toolchains/llvm/prebuilt/darwin-x86_64/bin"
         "${_st_ndk}/toolchains/llvm/prebuilt/darwin-arm64/bin"
     )
-    find_program(_st_clang
-        NAMES clang.exe clang
-        PATHS ${_st_llvm_bin_candidates}
-        NO_DEFAULT_PATH
-    )
+    file(GLOB _st_llvm_glob_bins
+        "${_st_ndk}/toolchains/llvm/prebuilt/*/bin"
+        "${_st_ndk}/*/toolchains/llvm/prebuilt/*/bin")
+    list(APPEND _st_llvm_bin_candidates ${_st_llvm_glob_bins})
+    list(REMOVE_DUPLICATES _st_llvm_bin_candidates)
+    foreach(_st_bin IN LISTS _st_llvm_bin_candidates)
+        if(NOT _st_clang AND EXISTS "${_st_bin}/clang.exe")
+            set(_st_clang "${_st_bin}/clang.exe")
+        endif()
+        if(NOT _st_clang AND EXISTS "${_st_bin}/clang")
+            set(_st_clang "${_st_bin}/clang")
+        endif()
+    endforeach()
 endif()
 
 if(_st_clang)
@@ -160,10 +169,10 @@ if(_st_clang)
             DESTINATION "${opentrack-libexec}/android"
             PERMISSIONS ${opentrack-perms-exec})
 elseif(_st_ndk)
+    file(GLOB _st_ndk_top "${_st_ndk}/*")
     message(FATAL_ERROR
-        "ANDROID_NDK_ROOT is set (${_st_ndk}) but NDK clang.exe was not found. "
-        "Expected toolchains/llvm/prebuilt/<host>/bin/clang. "
-        "CI --target st-relay-android requires this compiler.")
+        "ANDROID_NDK_ROOT is set (${_st_ndk}) but NDK clang was not found under "
+        "toolchains/llvm/prebuilt/<host>/bin. Top-level entries: ${_st_ndk_top}")
 else()
     message(WARNING "Android NDK not set — st-relay will not be built")
 endif()
