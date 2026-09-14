@@ -60,11 +60,31 @@ class TestCMakeRelayLayout(unittest.TestCase):
             ["$install"],
             f"adb trio must copy to exactly one destination (install root), got {adb_dests}",
         )
+        self.assertEqual(len(adb_dests), 1)
 
         package = _workflow_step("Package install tree")
         self.assertNotIn(_SOURCE_RELAY_DIR, package)
         self.assertIn("modules\\android", package)
         self.assertIn("build\\tracker-smoothtrack\\android", package)
+
+    def test_workflow_pins_ndk_r27c_and_platform_tools_sha256(self):
+        with open(WORKFLOW_FILE, encoding="utf-8") as f:
+            text = f.read()
+
+        self.assertNotIn("platform-tools-latest-windows.zip", text)
+        self.assertIn("nttld/setup-ndk", text)
+        self.assertIn("ndk-version: r27c", text)
+        self.assertNotIn("C:\\Program Files (x86)\\Android\\android-sdk\\ndk", text)
+        self.assertIn("--target st-relay-android", text)
+
+        url_match = re.search(
+            r"https://dl\.google\.com/android/repository/platform-tools_r[\d.]+-win(?:dows)?\.zip",
+            text,
+        )
+        self.assertIsNotNone(url_match, "pinned versioned platform-tools URL is required")
+        window = text[max(0, url_match.start() - 500) : url_match.end() + 500]
+        sha = re.search(r"\b[A-Fa-f0-9]{64}\b", window)
+        self.assertIsNotNone(sha, "64-char SHA256 must appear next to the platform-tools URL")
 
     def test_compile_step_exports_ndk_and_does_not_write_source_tree_relays(self):
         compile_step = _workflow_step("Compile Android SmoothTrack USB relay daemon")
@@ -74,6 +94,8 @@ class TestCMakeRelayLayout(unittest.TestCase):
         self.assertNotIn("-static", compile_step)
         self.assertIn("GITHUB_ENV", compile_step)
         self.assertIn("ANDROID_NDK_ROOT", compile_step)
+        self.assertNotIn("ANDROID_NDK_LATEST_HOME", compile_step)
+        self.assertNotIn("Program Files", compile_step)
 
 
 if __name__ == "__main__":

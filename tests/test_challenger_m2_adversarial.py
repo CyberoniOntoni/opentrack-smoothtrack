@@ -104,7 +104,7 @@ class TestM2ChallengerAdversarial(unittest.TestCase):
 
             env_vars = {
                 "GITHUB_WORKSPACE": ws,
-                "ANDROID_NDK_LATEST_HOME": mock_ndk,
+                "ANDROID_NDK_ROOT": mock_ndk,
                 "GITHUB_ENV": github_env,
             }
             result = self.run_ps_script(self.compile_script, env_vars)
@@ -149,7 +149,7 @@ class TestM2ChallengerAdversarial(unittest.TestCase):
 
             env_vars = {
                 "GITHUB_WORKSPACE": ws,
-                "ANDROID_NDK_LATEST_HOME": mock_ndk
+                "ANDROID_NDK_ROOT": mock_ndk
             }
             result = self.run_ps_script(self.compile_script, env_vars)
             self.assertEqual(result.returncode, 0, f"NDK locate failed:\n{result.stdout}\n{result.stderr}")

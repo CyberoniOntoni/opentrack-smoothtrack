@@ -457,21 +457,26 @@ class TestR4CIWorkflowAndPackagingStress(unittest.TestCase):
         step_names = [s.get("name") for s in steps]
 
         self.assertIn("Compile Android SmoothTrack USB relay daemon", step_names)
+        self.assertIn("Build st-relay", step_names)
         self.assertIn("Package install tree", step_names)
         self.assertIn("Upload Windows 11 build artifact", step_names)
 
-        # Check relay compilation step
+        setup_ndk = next(s for s in steps if s.get("uses") == "nttld/setup-ndk@v1")
+        self.assertEqual(setup_ndk["with"]["ndk-version"], "r27c")
+
         compile_step = next(s for s in steps if s.get("name") == "Compile Android SmoothTrack USB relay daemon")
         compile_script = compile_step["run"]
 
         self.assertIn("ANDROID_NDK_ROOT", compile_script)
         self.assertIn("GITHUB_ENV", compile_script)
-        self.assertIn("aarch64-linux-android", compile_script)
-        self.assertIn("armv7a-linux-androideabi", compile_script)
+        self.assertIn("Android NDK setup failed", compile_script)
         self.assertNotIn(
             'Join-Path $env:GITHUB_WORKSPACE "tracker-smoothtrack\\android"',
             compile_script,
         )
+
+        build_relay = next(s for s in steps if s.get("name") == "Build st-relay")
+        self.assertIn("st-relay-android", build_relay["run"])
 
         cmake_path = os.path.join(SMOOTHTRACK_DIR, "CMakeLists.txt")
         with open(cmake_path, encoding="utf-8") as f:

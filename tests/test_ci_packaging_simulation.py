@@ -4,6 +4,7 @@ Empirical challenger validation for Milestone 2.
 """
 
 import os
+import re
 import sys
 import shutil
 import tempfile
@@ -414,29 +415,24 @@ class TestCIPackagingWorkflow(unittest.TestCase):
             self.assertFalse(os.path.exists(os.path.join(ws, "tracker-smoothtrack", "android", "st-relay-arm64")))
 
     def test_09_compile_relay_script_error_handling_when_ndk_missing(self):
-        """Verify that Compile Android SmoothTrack USB relay daemon step fails if NDK is missing."""
+        """Compile step fails clearly if setup-ndk did not provide ANDROID_NDK_ROOT."""
         with tempfile.TemporaryDirectory() as test_dir:
             ws = os.path.join(test_dir, "workspace")
             os.makedirs(ws)
             env_vars = {
                 "GITHUB_WORKSPACE": ws,
-                "ANDROID_NDK_LATEST_HOME": "",
                 "ANDROID_NDK_ROOT": "",
-                "ANDROID_NDK_HOME": "",
-                "ANDROID_HOME": "",
-                "ANDROID_SDK_ROOT": "",
-                "LOCALAPPDATA": os.path.join(test_dir, "nonexistent")
             }
             result = self.run_ps_script(self.compile_script, env_vars)
             self.assertNotEqual(result.returncode, 0, "Compile step should fail if NDK is missing")
             combined = result.stdout + result.stderr
             self.assertTrue(
-                "Android NDK toolchain not found" in combined,
-                f"Expected NDK not found error:\n{combined}"
+                "Android NDK setup failed" in combined,
+                f"Expected NDK setup failure error:\n{combined}"
             )
 
     def test_10_compile_relay_script_happy_path_simulation(self):
-        """NDK locate step exports ANDROID_NDK_ROOT and does not write source-tree relays."""
+        """Pinned NDK path is exported as ANDROID_NDK_ROOT and source-tree relays are not written."""
         with tempfile.TemporaryDirectory() as test_dir:
             ws = os.path.join(test_dir, "workspace")
             os.makedirs(ws)
@@ -446,14 +442,7 @@ class TestCIPackagingWorkflow(unittest.TestCase):
                 f.write("int main() { return 0; }\n")
 
             mock_ndk = os.path.join(test_dir, "mock_ndk")
-            llvm_bin = os.path.join(mock_ndk, "toolchains", "llvm", "prebuilt", "windows-x86_64", "bin")
-            os.makedirs(llvm_bin, exist_ok=True)
-
-            mock_clang_bat = "@echo off\r\necho should not be invoked\r\nexit /b 1\r\n"
-            with open(os.path.join(llvm_bin, "aarch64-linux-android24-clang.cmd"), "w") as f:
-                f.write(mock_clang_bat)
-            with open(os.path.join(llvm_bin, "armv7a-linux-androideabi24-clang.cmd"), "w") as f:
-                f.write(mock_clang_bat)
+            os.makedirs(mock_ndk, exist_ok=True)
 
             github_env = os.path.join(test_dir, "github_env.txt")
             with open(github_env, "w", encoding="utf-8") as f:
@@ -461,11 +450,11 @@ class TestCIPackagingWorkflow(unittest.TestCase):
 
             env_vars = {
                 "GITHUB_WORKSPACE": ws,
-                "ANDROID_NDK_LATEST_HOME": mock_ndk,
+                "ANDROID_NDK_ROOT": mock_ndk,
                 "GITHUB_ENV": github_env,
             }
             result = self.run_ps_script(self.compile_script, env_vars)
-            self.assertEqual(result.returncode, 0, f"NDK locate script failed:\n{result.stdout}\n{result.stderr}")
+            self.assertEqual(result.returncode, 0, f"NDK export script failed:\n{result.stdout}\n{result.stderr}")
             self.assertFalse(os.path.exists(os.path.join(relay_dir, "st-relay-arm64")))
             self.assertFalse(os.path.exists(os.path.join(relay_dir, "st-relay-armv7")))
             with open(github_env, encoding="utf-8") as f:
@@ -473,26 +462,45 @@ class TestCIPackagingWorkflow(unittest.TestCase):
             self.assertIn("ANDROID_NDK_ROOT=", exported)
             self.assertIn(os.path.normcase(mock_ndk), os.path.normcase(exported))
 
-    def test_11_compile_relay_script_fails_when_clang_wrapper_missing(self):
-        """NDK locate step fails if clang wrappers are absent."""
+    def test_11_compile_relay_script_fails_when_ndk_path_missing(self):
+        """Compile step fails clearly if ANDROID_NDK_ROOT does not exist (setup-ndk failed)."""
         with tempfile.TemporaryDirectory() as test_dir:
             ws = os.path.join(test_dir, "workspace")
             os.makedirs(ws)
-            mock_ndk = os.path.join(test_dir, "mock_ndk")
-            llvm_bin = os.path.join(mock_ndk, "toolchains", "llvm", "prebuilt", "windows-x86_64", "bin")
-            os.makedirs(llvm_bin, exist_ok=True)
+            missing = os.path.join(test_dir, "does-not-exist-ndk")
 
             env_vars = {
                 "GITHUB_WORKSPACE": ws,
-                "ANDROID_NDK_LATEST_HOME": mock_ndk
+                "ANDROID_NDK_ROOT": missing,
             }
             result = self.run_ps_script(self.compile_script, env_vars)
-            self.assertNotEqual(result.returncode, 0, "Script should fail when clang wrappers are missing")
+            self.assertNotEqual(result.returncode, 0, "Script should fail when NDK path is missing")
             combined = result.stdout + result.stderr
             self.assertTrue(
-                "clang wrapper not found" in combined,
-                f"Expected missing wrapper message in output:\n{combined}"
+                "Android NDK setup failed" in combined,
+                f"Expected NDK setup failure in output:\n{combined}"
             )
+
+    def test_13_workflow_pins_ndk_and_platform_tools(self):
+        """Windows CI must pin NDK r27c and a versioned platform-tools zip with SHA256."""
+        with open(WORKFLOW_FILE, encoding="utf-8") as f:
+            text = f.read()
+        self.assertNotIn("platform-tools-latest-windows.zip", text)
+        self.assertIn("ndk-version: r27c", text)
+        url_match = re.search(
+            r"https://dl\.google\.com/android/repository/platform-tools_r[\d.]+-win(?:dows)?\.zip",
+            text,
+        )
+        self.assertIsNotNone(url_match, "pinned versioned platform-tools URL is required")
+        window = text[max(0, url_match.start() - 500) : url_match.end() + 500]
+        self.assertIsNotNone(
+            re.search(r"\b[A-Fa-f0-9]{64}\b", window),
+            "64-char SHA256 must appear next to the platform-tools URL",
+        )
+        dests = re.search(r"\$adbDests\s*=\s*@\((.*?)\)", text, re.S)
+        self.assertIsNotNone(dests, "$adbDests array is required")
+        adb_dests = [re.sub(r"#.*", "", raw).strip() for raw in dests.group(1).split(",") if re.sub(r"#.*", "", raw).strip()]
+        self.assertEqual(adb_dests, ["$install"], f"adb Copy-Item destination count must be 1, got {adb_dests}")
 
 
     def test_12_adb_self_overwrite_when_platform_tools_in_install_dest(self):
