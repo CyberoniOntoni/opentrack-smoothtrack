@@ -553,8 +553,11 @@ class TestR4CIWorkflowAndPackagingStress(unittest.TestCase):
                 self.assertIn("adb.exe", names)
                 self.assertIn("AdbWinApi.dll", names)
                 self.assertIn("AdbWinUsbApi.dll", names)
-                self.assertIn("st-relay-arm64", names)
-                self.assertIn("st-relay-armv7", names)
+                names_norm = [n.replace("\\", "/") for n in names]
+                self.assertIn("modules/android/st-relay-arm64", names_norm)
+                self.assertIn("modules/android/st-relay-armv7", names_norm)
+                self.assertNotIn("st-relay-arm64", names_norm)
+                self.assertNotIn("st-relay-armv7", names_norm)
 
 
 if __name__ == "__main__":

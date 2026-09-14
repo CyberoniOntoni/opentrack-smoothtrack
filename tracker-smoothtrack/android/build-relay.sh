@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# Script to cross-compile relay.c for Android using the Android NDK
+# Script to cross-compile relay.c for Android using the Android NDK.
+# CMake is canonical; this helper writes to OUT_DIR (default: alongside the script in out/).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "${SCRIPT_DIR}"
+OUT_DIR="${OUT_DIR:-$SCRIPT_DIR/out}"
+mkdir -p "${OUT_DIR}"
 
 if [[ -z "${ANDROID_NDK_ROOT:-}" && -n "${ANDROID_NDK_HOME:-}" ]]; then
     ANDROID_NDK_ROOT="${ANDROID_NDK_HOME}"
@@ -37,17 +39,17 @@ if [[ -n "${ANDROID_NDK_ROOT:-}" && -d "${ANDROID_NDK_ROOT}" ]]; then
     # Build arm64-v8a (64-bit ARM - standard for all modern Android phones)
     echo "Compiling st-relay-arm64..."
     "${TOOLCHAIN}/aarch64-linux-android${API_LEVEL}-clang" \
-        -O2 -Wall -Wextra -static relay.c -o st-relay-arm64
-    chmod +x st-relay-arm64
+        -O2 -Wall -Wextra -static "${SCRIPT_DIR}/relay.c" -o "${OUT_DIR}/st-relay-arm64"
+    chmod +x "${OUT_DIR}/st-relay-arm64"
 
     # Build armeabi-v7a (32-bit ARM - for older Android devices)
     echo "Compiling st-relay-armv7..."
     "${TOOLCHAIN}/armv7a-linux-androideabi${API_LEVEL}-clang" \
-        -O2 -Wall -Wextra -static relay.c -o st-relay-armv7
-    chmod +x st-relay-armv7
+        -O2 -Wall -Wextra -static "${SCRIPT_DIR}/relay.c" -o "${OUT_DIR}/st-relay-armv7"
+    chmod +x "${OUT_DIR}/st-relay-armv7"
 
-    echo "Relay binaries successfully built!"
-    ls -la st-relay-arm64 st-relay-armv7
+    echo "Relay binaries successfully built in ${OUT_DIR}"
+    ls -la "${OUT_DIR}/st-relay-arm64" "${OUT_DIR}/st-relay-armv7"
 else
     echo "Android NDK not found. To compile manually:"
     echo "  \$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/<host>/bin/aarch64-linux-android24-clang -O2 -static relay.c -o st-relay-arm64"

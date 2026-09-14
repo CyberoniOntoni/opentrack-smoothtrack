@@ -261,11 +261,9 @@ jobs:
           Write-Host "ADB platform-tools located at: $ptFound"
 
           # 2. Bundle ADB tools (adb.exe, AdbWinApi.dll, AdbWinUsbApi.dll)
-          # Target destinations: $install (application root), $install\modules, $install\platform-tools
+          # Canonical destination: ${opentrack-bin} (install root)
           $adbDests = @(
-            $install,
-            (Join-Path $install "modules"),
-            (Join-Path $install "platform-tools")
+            $install
           )
 
           foreach ($dest in $adbDests) {
@@ -287,12 +285,10 @@ jobs:
           }
 
           # 3. Stage relay binaries (st-relay-arm64, st-relay-armv7)
-          # Target destinations: $install (application root), $install\android, $install\modules\android
+          # Canonical destination: ${opentrack-libexec}/android
           $relayFiles = @("st-relay-arm64", "st-relay-armv7")
           $relaySrcDir = Join-Path $env:GITHUB_WORKSPACE "tracker-smoothtrack\android"
           $relayDests = @(
-            $install,
-            (Join-Path $install "android"),
             (Join-Path $install "modules\android")
           )
 
@@ -329,9 +325,7 @@ jobs:
             "opentrack.exe",
             "adb.exe",
             "AdbWinApi.dll",
-            "AdbWinUsbApi.dll",
-            "st-relay-arm64",
-            "st-relay-armv7"
+            "AdbWinUsbApi.dll"
           )
           $verificationFailed = $false
           foreach ($rf in $requiredRootFiles) {
@@ -346,6 +340,22 @@ jobs:
                 $verificationFailed = $true
               } else {
                 Write-Host "  [OK] $rf ($($item.Length) bytes)"
+              }
+            }
+          }
+
+          foreach ($rf in $relayFiles) {
+            $target = Join-Path $install "modules\android\$rf"
+            if (-not (Test-Path $target)) {
+              Write-Error "[FAIL] Missing required relay artifact: $target"
+              $verificationFailed = $true
+            } else {
+              $item = Get-Item $target
+              if ($item.Length -le 0) {
+                Write-Error "[FAIL] Required artifact is 0-byte: $target"
+                $verificationFailed = $true
+              } else {
+                Write-Host "  [OK] modules\android\$rf ($($item.Length) bytes)"
               }
             }
           }

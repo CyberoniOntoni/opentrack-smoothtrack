@@ -294,8 +294,8 @@ class TestPathEqualityStress(unittest.TestCase):
             res = self.run_ps_script(self.package_script, env_vars)
             self.assertEqual(res.returncode, 0, f"Failed on fallback in path with spaces:\nSTDOUT:\n{res.stdout}\nSTDERR:\n{res.stderr}")
             self.assertNotIn("Cannot overwrite the item", res.stderr)
-            self.assertTrue(os.path.exists(os.path.join(install_dir, "android", "st-relay-arm64")))
             self.assertTrue(os.path.exists(os.path.join(install_dir, "modules", "android", "st-relay-arm64")))
+            self.assertFalse(os.path.exists(os.path.join(install_dir, "android", "st-relay-arm64")))
 
     def test_adb_self_overwrite_with_spaces_in_path(self):
         """Verify ADB self-overwrite guard works in directories containing spaces."""
@@ -330,7 +330,7 @@ class TestPathEqualityStress(unittest.TestCase):
             self.assertEqual(res.returncode, 0, f"Failed on ADB self-overwrite with spaces:\nSTDOUT:\n{res.stdout}\nSTDERR:\n{res.stderr}")
             self.assertNotIn("Cannot overwrite the item", res.stderr)
             self.assertTrue(os.path.exists(os.path.join(install_dir, "adb.exe")))
-            self.assertTrue(os.path.exists(os.path.join(install_dir, "modules", "adb.exe")))
+            self.assertFalse(os.path.exists(os.path.join(install_dir, "modules", "adb.exe")))
 
     # -------------------------------------------------------------------------
     # Category 3: Bracket character wildcard vulnerability analysis

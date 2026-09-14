@@ -113,40 +113,47 @@ class TestCIPackagingWorkflow(unittest.TestCase):
                 f"Packaging script failed unexpectedly:\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
             )
 
-            # 1. Verify files exist in root ($install)
+            # 1. Verify files exist in root ($install / opentrack-bin)
             root_expected = [
                 "opentrack.exe",
                 "adb.exe",
                 "AdbWinApi.dll",
                 "AdbWinUsbApi.dll",
-                "st-relay-arm64",
-                "st-relay-armv7"
             ]
             for fname in root_expected:
                 p = os.path.join(install_dir, fname)
                 self.assertTrue(os.path.exists(p), f"Missing root artifact: {fname}")
                 self.assertGreater(os.path.getsize(p), 0, f"0-byte root artifact: {fname}")
 
-            # 2. Verify files exist in subdirectories
-            # modules/
-            for fname in ["adb.exe", "AdbWinApi.dll", "AdbWinUsbApi.dll", "opentrack-tracker-smoothtrack.dll"]:
-                p = os.path.join(install_dir, "modules", fname)
-                self.assertTrue(os.path.exists(p), f"Missing modules/ artifact: {fname}")
-
-            # platform-tools/
-            for fname in ["adb.exe", "AdbWinApi.dll", "AdbWinUsbApi.dll"]:
-                p = os.path.join(install_dir, "platform-tools", fname)
-                self.assertTrue(os.path.exists(p), f"Missing platform-tools/ artifact: {fname}")
-
-            # android/
+            # Relays and extra adb copies must not land at install root / modules / platform-tools.
             for fname in ["st-relay-arm64", "st-relay-armv7"]:
-                p = os.path.join(install_dir, "android", fname)
-                self.assertTrue(os.path.exists(p), f"Missing android/ artifact: {fname}")
+                self.assertFalse(
+                    os.path.exists(os.path.join(install_dir, fname)),
+                    f"Relay {fname} must not be copied to install root",
+                )
+            for fname in ["adb.exe", "AdbWinApi.dll", "AdbWinUsbApi.dll"]:
+                self.assertFalse(
+                    os.path.exists(os.path.join(install_dir, "modules", fname)),
+                    f"ADB {fname} must not be copied to modules/",
+                )
+                self.assertFalse(
+                    os.path.exists(os.path.join(install_dir, "platform-tools", fname)),
+                    f"ADB {fname} must not be copied to platform-tools/",
+                )
 
-            # modules/android/
+            self.assertTrue(
+                os.path.exists(os.path.join(install_dir, "modules", "opentrack-tracker-smoothtrack.dll")),
+                "Missing modules/opentrack-tracker-smoothtrack.dll",
+            )
+
+            # Canonical relay location: modules/android/
             for fname in ["st-relay-arm64", "st-relay-armv7"]:
                 p = os.path.join(install_dir, "modules", "android", fname)
                 self.assertTrue(os.path.exists(p), f"Missing modules/android/ artifact: {fname}")
+                self.assertFalse(
+                    os.path.exists(os.path.join(install_dir, "android", fname)),
+                    f"Relay {fname} must not be copied to install/android/",
+                )
 
             # 3. Verify release zip file exists and is non-empty
             zip_path = os.path.join(ws, "opentrack-windows11-x64.zip")
@@ -161,11 +168,12 @@ class TestCIPackagingWorkflow(unittest.TestCase):
                 for fname in root_expected:
                     self.assertIn(fname, namelist, f"ZIP root missing '{fname}' (actual: {namelist[:10]})")
 
-                # Check subdirectories within ZIP
-                self.assertIn("modules/adb.exe", namelist)
-                self.assertIn("platform-tools/adb.exe", namelist)
-                self.assertIn("android/st-relay-arm64", namelist)
+                self.assertNotIn("st-relay-arm64", namelist)
+                self.assertNotIn("modules/adb.exe", namelist)
+                self.assertNotIn("platform-tools/adb.exe", namelist)
+                self.assertNotIn("android/st-relay-arm64", namelist)
                 self.assertIn("modules/android/st-relay-arm64", namelist)
+                self.assertIn("modules/android/st-relay-armv7", namelist)
                 self.assertIn("modules/opentrack-tracker-smoothtrack.dll", namelist)
 
     def test_02_missing_opentrack_exe_fails(self):

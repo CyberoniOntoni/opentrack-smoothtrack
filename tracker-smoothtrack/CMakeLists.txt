@@ -99,25 +99,66 @@ else()
     message(STATUS "libusbmuxd not found — tracker-smoothtrack will support Android USB only")
 endif()
 
-# Install Android relay binaries if present in source tree
-set(_relay_bins
-    "${CMAKE_CURRENT_SOURCE_DIR}/android/st-relay-arm64"
-    "${CMAKE_CURRENT_SOURCE_DIR}/android/st-relay-armv7"
-)
-foreach(_relay_bin IN LISTS _relay_bins)
-    if(EXISTS "${_relay_bin}")
-        install(FILES "${_relay_bin}"
-                DESTINATION "${opentrack-bin}"
-                PERMISSIONS ${opentrack-perms-exec})
-        install(FILES "${_relay_bin}"
-                DESTINATION "${opentrack-libexec}/android"
-                PERMISSIONS ${opentrack-perms-exec})
-    endif()
-endforeach()
+# Cross-compile Android relays into the build tree when NDK clang is available.
+set(_st_ndk "$ENV{ANDROID_NDK_ROOT}")
+if(NOT _st_ndk)
+    set(_st_ndk "$ENV{ANDROID_NDK_HOME}")
+endif()
+if(NOT _st_ndk)
+    set(_st_ndk "$ENV{ANDROID_NDK_LATEST_HOME}")
+endif()
+
+set(_st_relay_dir "${CMAKE_CURRENT_BINARY_DIR}/android")
+file(MAKE_DIRECTORY "${_st_relay_dir}")
+
+set(_st_clang64 "")
+set(_st_clang32 "")
+if(_st_ndk)
+    file(GLOB _st_ndk_bins "${_st_ndk}/toolchains/llvm/prebuilt/*/bin")
+    find_program(_st_clang64
+        NAMES aarch64-linux-android24-clang aarch64-linux-android24-clang.cmd
+        PATHS ${_st_ndk_bins}
+        NO_DEFAULT_PATH
+    )
+    find_program(_st_clang32
+        NAMES armv7a-linux-androideabi24-clang armv7a-linux-androideabi24-clang.cmd
+        PATHS ${_st_ndk_bins}
+        NO_DEFAULT_PATH
+    )
+endif()
+
+if(_st_clang64 AND _st_clang32)
+    set(_st_relay_src "${CMAKE_CURRENT_SOURCE_DIR}/android/relay.c")
+    add_custom_command(
+        OUTPUT "${_st_relay_dir}/st-relay-arm64"
+        COMMAND "${_st_clang64}" -O2 -Wall -Wextra -static "${_st_relay_src}"
+                -o "${_st_relay_dir}/st-relay-arm64"
+        DEPENDS "${_st_relay_src}"
+        COMMENT "Cross-compiling st-relay-arm64"
+    )
+    add_custom_command(
+        OUTPUT "${_st_relay_dir}/st-relay-armv7"
+        COMMAND "${_st_clang32}" -O2 -Wall -Wextra -static "${_st_relay_src}"
+                -o "${_st_relay_dir}/st-relay-armv7"
+        DEPENDS "${_st_relay_src}"
+        COMMENT "Cross-compiling st-relay-armv7"
+    )
+    add_custom_target(st-relay-android ALL
+        DEPENDS
+            "${_st_relay_dir}/st-relay-arm64"
+            "${_st_relay_dir}/st-relay-armv7"
+    )
+    install(FILES
+            "${_st_relay_dir}/st-relay-arm64"
+            "${_st_relay_dir}/st-relay-armv7"
+            DESTINATION "${opentrack-libexec}/android"
+            PERMISSIONS ${opentrack-perms-exec})
+else()
+    message(WARNING "Android NDK clang not found — st-relay will not be built")
+endif()
 
 # Host test for relay I/O helpers. POSIX sockets only; not installed.
 if(NOT WIN32)
     add_executable(test_relay_io "${CMAKE_SOURCE_DIR}/tests/test_relay_io.c")
     target_include_directories(test_relay_io PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/android")
 endif()
-
