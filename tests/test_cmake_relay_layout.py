@@ -3,10 +3,18 @@
 import os
 import re
 import unittest
+import yaml
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 CMAKE_FILE = os.path.join(REPO_ROOT, "tracker-smoothtrack", "CMakeLists.txt")
 WORKFLOW_FILE = os.path.join(REPO_ROOT, ".github", "workflows", "windows-11.yml")
+PINNED_PLATFORM_TOOLS_URL = (
+    "https://dl.google.com/android/repository/platform-tools_r36.0.0-win.zip"
+)
+PINNED_PLATFORM_TOOLS_SHA256 = (
+    "12C2841F354E92A0EB2FD7BF6F0F9BF8538ABCE7BD6B060AC8349D6F6A61107C"
+)
+NDK_PATH_EXPR = "${{ steps.setup-ndk.outputs.ndk-path }}"
 
 _SOURCE_RELAY_DIR = 'Join-Path $env:GITHUB_WORKSPACE "tracker-smoothtrack\\android"'
 
@@ -72,22 +80,29 @@ class TestCMakeRelayLayout(unittest.TestCase):
             text = f.read()
 
         self.assertNotIn("platform-tools-latest-windows.zip", text)
+        self.assertNotIn("platform-tools_r36.0.0-windows.zip", text)
         self.assertIn("nttld/setup-ndk", text)
         self.assertIn("ndk-version: r27c", text)
         self.assertNotIn("C:\\Program Files (x86)\\Android\\android-sdk\\ndk", text)
         self.assertIn("--target st-relay-android", text)
+        self.assertIn(PINNED_PLATFORM_TOOLS_URL, text)
+        self.assertIn(PINNED_PLATFORM_TOOLS_SHA256, text)
+        url_at = text.index(PINNED_PLATFORM_TOOLS_URL)
+        sha_at = text.index(PINNED_PLATFORM_TOOLS_SHA256)
+        self.assertLess(abs(sha_at - url_at), 500)
 
-        url_match = re.search(
-            r"https://dl\.google\.com/android/repository/platform-tools_r[\d.]+-win(?:dows)?\.zip",
-            text,
-        )
-        self.assertIsNotNone(url_match, "pinned versioned platform-tools URL is required")
-        window = text[max(0, url_match.start() - 500) : url_match.end() + 500]
-        sha = re.search(r"\b[A-Fa-f0-9]{64}\b", window)
-        self.assertIsNotNone(sha, "64-char SHA256 must appear next to the platform-tools URL")
+        workflow = yaml.safe_load(text)
+        steps = workflow["jobs"]["windows-11-x64"]["steps"]
+        setup_ndk = next(s for s in steps if s.get("uses") == "nttld/setup-ndk@v1")
+        self.assertEqual(setup_ndk["with"]["ndk-version"], "r27c")
+        self.assertEqual(setup_ndk["with"]["add-to-path"], False)
+        export_step = next(s for s in steps if s.get("name") == "Export Android NDK")
+        self.assertEqual(export_step["env"]["ANDROID_NDK_ROOT"], NDK_PATH_EXPR)
+        build_relay = next(s for s in steps if s.get("name") == "Build st-relay")
+        self.assertEqual(build_relay["env"]["ANDROID_NDK_ROOT"], NDK_PATH_EXPR)
 
     def test_compile_step_exports_ndk_and_does_not_write_source_tree_relays(self):
-        compile_step = _workflow_step("Compile Android SmoothTrack USB relay daemon")
+        compile_step = _workflow_step("Export Android NDK")
         self.assertNotIn(_SOURCE_RELAY_DIR, compile_step)
         self.assertNotIn('Join-Path $relayDir "st-relay-arm64"', compile_step)
         self.assertNotIn('Join-Path $relayDir "st-relay-armv7"', compile_step)

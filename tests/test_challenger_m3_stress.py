@@ -456,15 +456,20 @@ class TestR4CIWorkflowAndPackagingStress(unittest.TestCase):
         steps = workflow["jobs"]["windows-11-x64"]["steps"]
         step_names = [s.get("name") for s in steps]
 
-        self.assertIn("Compile Android SmoothTrack USB relay daemon", step_names)
+        self.assertIn("Export Android NDK", step_names)
         self.assertIn("Build st-relay", step_names)
         self.assertIn("Package install tree", step_names)
         self.assertIn("Upload Windows 11 build artifact", step_names)
 
         setup_ndk = next(s for s in steps if s.get("uses") == "nttld/setup-ndk@v1")
         self.assertEqual(setup_ndk["with"]["ndk-version"], "r27c")
+        self.assertEqual(setup_ndk["with"]["add-to-path"], False)
 
-        compile_step = next(s for s in steps if s.get("name") == "Compile Android SmoothTrack USB relay daemon")
+        compile_step = next(s for s in steps if s.get("name") == "Export Android NDK")
+        self.assertEqual(
+            compile_step["env"]["ANDROID_NDK_ROOT"],
+            "${{ steps.setup-ndk.outputs.ndk-path }}",
+        )
         compile_script = compile_step["run"]
 
         self.assertIn("ANDROID_NDK_ROOT", compile_script)

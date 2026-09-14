@@ -32,7 +32,7 @@ class TestM2ChallengerAdversarial(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.package_script = extract_workflow_step("Package install tree")
-        cls.compile_script = extract_workflow_step("Compile Android SmoothTrack USB relay daemon")
+        cls.compile_script = extract_workflow_step("Export Android NDK")
         cls.powershell_exe = "powershell.exe"
 
     def run_ps_script(self, script_text: str, env_vars: dict) -> subprocess.CompletedProcess:

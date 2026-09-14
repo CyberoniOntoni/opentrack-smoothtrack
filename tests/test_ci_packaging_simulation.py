@@ -46,7 +46,7 @@ class TestCIPackagingWorkflow(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.package_script = extract_workflow_step("Package install tree")
-        cls.compile_script = extract_workflow_step("Compile Android SmoothTrack USB relay daemon")
+        cls.compile_script = extract_workflow_step("Export Android NDK")
         cls.powershell_exe = "powershell.exe"
 
     def run_ps_script(self, script_text: str, env_vars: dict) -> subprocess.CompletedProcess:
@@ -486,16 +486,21 @@ class TestCIPackagingWorkflow(unittest.TestCase):
         with open(WORKFLOW_FILE, encoding="utf-8") as f:
             text = f.read()
         self.assertNotIn("platform-tools-latest-windows.zip", text)
+        self.assertNotIn("platform-tools_r36.0.0-windows.zip", text)
         self.assertIn("ndk-version: r27c", text)
-        url_match = re.search(
-            r"https://dl\.google\.com/android/repository/platform-tools_r[\d.]+-win(?:dows)?\.zip",
-            text,
-        )
-        self.assertIsNotNone(url_match, "pinned versioned platform-tools URL is required")
-        window = text[max(0, url_match.start() - 500) : url_match.end() + 500]
-        self.assertIsNotNone(
-            re.search(r"\b[A-Fa-f0-9]{64}\b", window),
-            "64-char SHA256 must appear next to the platform-tools URL",
+        pinned_url = "https://dl.google.com/android/repository/platform-tools_r36.0.0-win.zip"
+        pinned_sha = "12C2841F354E92A0EB2FD7BF6F0F9BF8538ABCE7BD6B060AC8349D6F6A61107C"
+        self.assertIn(pinned_url, text)
+        self.assertIn(pinned_sha, text)
+        self.assertLess(abs(text.index(pinned_sha) - text.index(pinned_url)), 500)
+        workflow = yaml.safe_load(text)
+        steps = workflow["jobs"]["windows-11-x64"]["steps"]
+        setup_ndk = next(s for s in steps if s.get("uses") == "nttld/setup-ndk@v1")
+        self.assertEqual(setup_ndk["with"]["add-to-path"], False)
+        export_step = next(s for s in steps if s.get("name") == "Export Android NDK")
+        self.assertEqual(
+            export_step["env"]["ANDROID_NDK_ROOT"],
+            "${{ steps.setup-ndk.outputs.ndk-path }}",
         )
         dests = re.search(r"\$adbDests\s*=\s*@\((.*?)\)", text, re.S)
         self.assertIsNotNone(dests, "$adbDests array is required")
@@ -504,7 +509,7 @@ class TestCIPackagingWorkflow(unittest.TestCase):
 
 
     def test_12_adb_self_overwrite_when_platform_tools_in_install_dest(self):
-        """Demonstrates BUG in windows-11.yml: Copy-Item self-overwrite when adb is in install/platform-tools."""
+        """Regression: same-path Copy-Item of adb from install/platform-tools must succeed."""
         with tempfile.TemporaryDirectory() as test_dir:
             ws = os.path.join(test_dir, "workspace")
             install_dir = os.path.join(ws, "build", "install")

@@ -73,7 +73,7 @@ jobs:
           ndk-version: r27c
           add-to-path: false
 
-      - name: Compile Android SmoothTrack USB relay daemon
+      - name: Export Android NDK
         env:
           ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
         shell: pwsh
