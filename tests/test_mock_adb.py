@@ -161,10 +161,13 @@ class TestMockAdbCli(unittest.TestCase):
             with self.subTest(args=args):
                 result = _run(args, self.env)
                 self.assertEqual(result.returncode, 0)
+                self.assertEqual(result.stdout.strip(), "kill")
 
     def test_kill_tokens_do_not_match_substrings(self):
         result = _run(["shell", "echo", "not_pkill_here"], self.env)
-        self.assertEqual(result.returncode, 0)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("kill", result.stdout.split())
+        self.assertIn("unknown shell command", result.stderr)
 
     def test_relay_exit_one_prints_stderr_and_exits_five(self):
         env = dict(self.env)

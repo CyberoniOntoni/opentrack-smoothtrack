@@ -115,8 +115,10 @@ def main(argv):
                 return 5
             return _sleep_until_killed()
         if _shell_is_kill(shell_args):
+            sys.stdout.write("kill\n")
             return 0
-        return 0
+        sys.stderr.write("unknown shell command\n")
+        return 1
 
     return 0
 
