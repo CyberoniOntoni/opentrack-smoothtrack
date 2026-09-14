@@ -35,15 +35,17 @@ if [[ -n "${ANDROID_NDK_ROOT:-}" && -d "${ANDROID_NDK_ROOT}" ]]; then
     TOOLCHAIN="${ANDROID_NDK_ROOT}/toolchains/llvm/prebuilt/${HOST_OS}/bin"
     API_LEVEL=24
 
-    # Build arm64-v8a (64-bit ARM - standard for all modern Android phones)
+    CLANG="${TOOLCHAIN}/clang"
+    if [[ ! -x "${CLANG}" && -x "${CLANG}.exe" ]]; then
+        CLANG="${CLANG}.exe"
+    fi
     echo "Compiling st-relay-arm64..."
-    "${TOOLCHAIN}/aarch64-linux-android${API_LEVEL}-clang" \
+    "${CLANG}" --target=aarch64-linux-android${API_LEVEL} \
         -O2 -Wall -Wextra -static "${SCRIPT_DIR}/relay.c" -o "${OUT_DIR}/st-relay-arm64"
     chmod +x "${OUT_DIR}/st-relay-arm64"
 
-    # Build armeabi-v7a (32-bit ARM - for older Android devices)
     echo "Compiling st-relay-armv7..."
-    "${TOOLCHAIN}/armv7a-linux-androideabi${API_LEVEL}-clang" \
+    "${CLANG}" --target=armv7a-linux-androideabi${API_LEVEL} \
         -O2 -Wall -Wextra -static "${SCRIPT_DIR}/relay.c" -o "${OUT_DIR}/st-relay-armv7"
     chmod +x "${OUT_DIR}/st-relay-armv7"
 
@@ -51,6 +53,6 @@ if [[ -n "${ANDROID_NDK_ROOT:-}" && -d "${ANDROID_NDK_ROOT}" ]]; then
     ls -la "${OUT_DIR}/st-relay-arm64" "${OUT_DIR}/st-relay-armv7"
 else
     echo "Android NDK not found. To compile manually:"
-    echo "  \$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/<host>/bin/aarch64-linux-android24-clang -O2 -static relay.c -o st-relay-arm64"
+    echo "  \$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/<host>/bin/clang --target=aarch64-linux-android24 -O2 -static relay.c -o st-relay-arm64"
     exit 1
 fi

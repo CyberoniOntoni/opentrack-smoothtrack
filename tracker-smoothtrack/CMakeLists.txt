@@ -107,38 +107,44 @@ endif()
 if(NOT _st_ndk)
     set(_st_ndk "$ENV{ANDROID_NDK_LATEST_HOME}")
 endif()
+if(_st_ndk)
+    file(TO_CMAKE_PATH "${_st_ndk}" _st_ndk)
+endif()
 
 set(_st_relay_dir "${CMAKE_CURRENT_BINARY_DIR}/android")
 file(MAKE_DIRECTORY "${_st_relay_dir}")
 
-set(_st_clang64 "")
-set(_st_clang32 "")
+set(_st_clang "")
+set(_st_llvm_bin_candidates "")
 if(_st_ndk)
-    file(GLOB _st_ndk_bins "${_st_ndk}/toolchains/llvm/prebuilt/*/bin")
-    find_program(_st_clang64
-        NAMES aarch64-linux-android24-clang aarch64-linux-android24-clang.cmd
-        PATHS ${_st_ndk_bins}
-        NO_DEFAULT_PATH
+    set(_st_llvm_bin_candidates
+        "${_st_ndk}/toolchains/llvm/prebuilt/windows-x86_64/bin"
+        "${_st_ndk}/toolchains/llvm/prebuilt/linux-x86_64/bin"
+        "${_st_ndk}/toolchains/llvm/prebuilt/linux-aarch64/bin"
+        "${_st_ndk}/toolchains/llvm/prebuilt/darwin-x86_64/bin"
+        "${_st_ndk}/toolchains/llvm/prebuilt/darwin-arm64/bin"
     )
-    find_program(_st_clang32
-        NAMES armv7a-linux-androideabi24-clang armv7a-linux-androideabi24-clang.cmd
-        PATHS ${_st_ndk_bins}
+    find_program(_st_clang
+        NAMES clang.exe clang
+        PATHS ${_st_llvm_bin_candidates}
         NO_DEFAULT_PATH
     )
 endif()
 
-if(_st_clang64 AND _st_clang32)
+if(_st_clang)
     set(_st_relay_src "${CMAKE_CURRENT_SOURCE_DIR}/android/relay.c")
     add_custom_command(
         OUTPUT "${_st_relay_dir}/st-relay-arm64"
-        COMMAND "${_st_clang64}" -O2 -Wall -Wextra -static "${_st_relay_src}"
+        COMMAND "${_st_clang}" --target=aarch64-linux-android24
+                -O2 -Wall -Wextra -static "${_st_relay_src}"
                 -o "${_st_relay_dir}/st-relay-arm64"
         DEPENDS "${_st_relay_src}"
         COMMENT "Cross-compiling st-relay-arm64"
     )
     add_custom_command(
         OUTPUT "${_st_relay_dir}/st-relay-armv7"
-        COMMAND "${_st_clang32}" -O2 -Wall -Wextra -static "${_st_relay_src}"
+        COMMAND "${_st_clang}" --target=armv7a-linux-androideabi24
+                -O2 -Wall -Wextra -static "${_st_relay_src}"
                 -o "${_st_relay_dir}/st-relay-armv7"
         DEPENDS "${_st_relay_src}"
         COMMENT "Cross-compiling st-relay-armv7"
@@ -153,8 +159,13 @@ if(_st_clang64 AND _st_clang32)
             "${_st_relay_dir}/st-relay-armv7"
             DESTINATION "${opentrack-libexec}/android"
             PERMISSIONS ${opentrack-perms-exec})
+elseif(_st_ndk)
+    message(FATAL_ERROR
+        "ANDROID_NDK_ROOT is set (${_st_ndk}) but NDK clang.exe was not found. "
+        "Expected toolchains/llvm/prebuilt/<host>/bin/clang. "
+        "CI --target st-relay-android requires this compiler.")
 else()
-    message(WARNING "Android NDK clang not found — st-relay will not be built")
+    message(WARNING "Android NDK not set — st-relay will not be built")
 endif()
 
 # Host test for relay I/O helpers. POSIX sockets only; not installed.
