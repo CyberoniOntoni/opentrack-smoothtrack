@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Standalone runner for remaining SmoothTrack e2e tests."""
+"""Standalone runner for remaining SmoothTrack mock-adb tests.
+
+Duplicate tier files were removed; the CLI contract lives in tests/test_mock_adb.py.
+"""
 
 import os
 import sys
@@ -7,13 +10,15 @@ import time
 import unittest
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+TESTS_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))
 PROJECT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, "..", ".."))
-if PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, PROJECT_ROOT)
+for path in (PROJECT_ROOT, TESTS_DIR):
+    if path not in sys.path:
+        sys.path.insert(0, path)
 
 
 def build_suite() -> unittest.TestSuite:
-    return unittest.TestLoader().discover(SCRIPT_DIR, pattern="test_*.py")
+    return unittest.defaultTestLoader.loadTestsFromName("test_mock_adb")
 
 
 def main():

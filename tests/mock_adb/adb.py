@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
-"""Mock Android Debug Bridge CLI for SmoothTrack tests.
-
-Controlled by environment variables (see module docstring in tests/test_mock_adb.py).
-"""
+"""Mock Android Debug Bridge CLI for SmoothTrack tests."""
 
 from __future__ import annotations
 
@@ -33,19 +30,39 @@ def _shell_is_relay_launch(shell_args):
     return bool(shell_args) and shell_args[0] == "/data/local/tmp/st-relay"
 
 
-def _shell_is_kill(shell_args):
+def _shell_tokens(shell_args):
     text = " ".join(shell_args)
-    for token in ("pkill", "killall", "pidof"):
-        if token in text.split() or token in text:
-            return True
-    parts = (
-        text.replace("$(", " ")
-        .replace(")", " ")
-        .replace("||", " ")
-        .replace("|", " ")
-        .split()
-    )
-    return "kill" in parts
+    for sep in ("$(", ")", "||", "|", ";", "&"):
+        text = text.replace(sep, " ")
+    return text.split()
+
+
+def _shell_is_kill(shell_args):
+    parts = _shell_tokens(shell_args)
+    return any(tok in ("pkill", "killall", "pidof", "kill") for tok in parts)
+
+
+def _write_relay_pid():
+    pid_path = os.environ.get("MOCK_ADB_RELAY_PID")
+    if not pid_path:
+        return
+    parent = os.path.dirname(pid_path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    with open(pid_path, "w", encoding="utf-8") as fh:
+        fh.write(str(os.getpid()))
+        fh.flush()
+        os.fsync(fh.fileno())
+
+
+def _sleep_until_killed():
+    _write_relay_pid()
+    try:
+        while True:
+            time.sleep(0.05)
+    except KeyboardInterrupt:
+        return 0
+    return 0
 
 
 def main(argv):
@@ -96,12 +113,7 @@ def main(argv):
             if os.environ.get("MOCK_ADB_RELAY_EXIT") == "1":
                 sys.stderr.write("Failed to connect to TCP reverse tunnel\n")
                 return 5
-            try:
-                while True:
-                    time.sleep(3600)
-            except KeyboardInterrupt:
-                return 0
-            return 0
+            return _sleep_until_killed()
         if _shell_is_kill(shell_args):
             return 0
         return 0

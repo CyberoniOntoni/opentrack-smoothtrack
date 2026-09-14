@@ -1,4 +1,8 @@
-"""Subprocess tests for tests/mock_adb — these fail until the CLI contract works."""
+"""Subprocess tests for tests/mock_adb — these fail until the CLI contract works.
+
+These cover the mock adb CLI only. Production adb_client (C++ QProcess) is not
+launched from Python; C++ QTest is not in scope for this PR.
+"""
 
 from __future__ import annotations
 
@@ -13,7 +17,47 @@ _TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
 if _TESTS_DIR not in sys.path:
     sys.path.insert(0, _TESTS_DIR)
 
-from mock_adb_cli import ADB, mock_adb_env, run_mock_adb as _run
+from mock_adb_cli import ADB_PY, WRAPPER, mock_adb_env, run_mock_adb as _run
+
+
+def _tasklist_has_pid(pid):
+    result = subprocess.run(
+        ["tasklist", "/FI", f"PID eq {pid}", "/NH"],
+        capture_output=True,
+        text=True,
+    )
+    out = result.stdout
+    if "No tasks" in out:
+        return False
+    return str(pid) in out
+
+
+def _pid_alive(pid):
+    if pid <= 0:
+        return False
+    if sys.platform == "win32":
+        return _tasklist_has_pid(pid)
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def _kill_pid_tree(pid):
+    if pid <= 0:
+        return
+    if sys.platform == "win32":
+        subprocess.run(
+            ["taskkill", "/F", "/T", "/PID", str(pid)],
+            capture_output=True,
+            text=True,
+        )
+        return
+    try:
+        os.kill(pid, 9)
+    except OSError:
+        pass
 
 
 class TestMockAdbCli(unittest.TestCase):
@@ -118,6 +162,10 @@ class TestMockAdbCli(unittest.TestCase):
                 result = _run(args, self.env)
                 self.assertEqual(result.returncode, 0)
 
+    def test_kill_tokens_do_not_match_substrings(self):
+        result = _run(["shell", "echo", "not_pkill_here"], self.env)
+        self.assertEqual(result.returncode, 0)
+
     def test_relay_exit_one_prints_stderr_and_exits_five(self):
         env = dict(self.env)
         env["MOCK_ADB_RELAY_EXIT"] = "1"
@@ -126,18 +174,55 @@ class TestMockAdbCli(unittest.TestCase):
         self.assertIn("Failed to connect to TCP reverse tunnel", result.stderr)
 
     def test_relay_sleeps_until_killed(self):
+        pid_path = os.path.join(self.tmpdir.name, "relay.pid")
+        env = dict(self.env)
+        env["MOCK_ADB_RELAY_PID"] = pid_path
         proc = subprocess.Popen(
-            [ADB, "shell", "/data/local/tmp/st-relay", "4242", "4242"],
+            [sys.executable, ADB_PY, "shell", "/data/local/tmp/st-relay", "4242", "4242"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
-            env=mock_adb_env(self.env),
+            env=mock_adb_env(env),
         )
+        child_pid = None
+        popped_pid = proc.pid
         try:
-            time.sleep(0.3)
+            deadline = time.time() + 2.0
+            while time.time() < deadline and not os.path.isfile(pid_path):
+                time.sleep(0.02)
+            self.assertTrue(os.path.isfile(pid_path), "mock must write MOCK_ADB_RELAY_PID")
+            with open(pid_path, encoding="utf-8") as fh:
+                child_pid = int(fh.read().strip())
+            self.assertEqual(child_pid, popped_pid)
             self.assertIsNone(proc.poll(), "relay must sleep until killed")
         finally:
             proc.kill()
+            _kill_pid_tree(popped_pid)
+            if child_pid and child_pid != popped_pid:
+                _kill_pid_tree(child_pid)
             proc.wait(timeout=5)
+
+        self.assertIsNotNone(proc.returncode, "python adb.py must exit on kill")
+        proc = None
+        deadline = time.time() + 2.0
+        while time.time() < deadline and _pid_alive(popped_pid):
+            time.sleep(0.05)
+        self.assertFalse(_pid_alive(popped_pid), "python adb.py sleeper must be gone")
+        if child_pid:
+            self.assertFalse(_pid_alive(child_pid), "pid-file process must be gone")
+
+    def test_wrapper_runs_short_devices_command(self):
+        result = subprocess.run(
+            [WRAPPER, "devices", "-l"],
+            capture_output=True,
+            text=True,
+            env=mock_adb_env(self.env),
+            timeout=5,
+        )
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(
+            result.stdout.strip(),
+            "emulator-5554 device product:sdk model:sdk",
+        )
 
 
 if __name__ == "__main__":
