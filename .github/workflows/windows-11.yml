@@ -140,6 +140,10 @@ jobs:
           $out64 = Join-Path $relayDir "st-relay-arm64"
           $out32 = Join-Path $relayDir "st-relay-armv7"
 
+          # Purge any stale binaries before cross-compilation
+          if (Test-Path $out64) { Remove-Item $out64 -Force }
+          if (Test-Path $out32) { Remove-Item $out32 -Force }
+
           if (-not (Test-Path $relaySrc)) { throw "Relay source not found at $relaySrc" }
 
           # 4. Cross-compile st-relay-arm64
@@ -166,9 +170,11 @@ jobs:
           # Use CMAKE_PREFIX_PATH for optional vcpkg packages (libusbmuxd) without
           # replacing the whole toolchain (keeps OpenCV from opencv-action).
           $extra = ""
-          $vcpkgInstalled = Join-Path $env:VCPKG_INSTALLATION_ROOT "installed\x64-windows"
-          if ($env:VCPKG_INSTALLATION_ROOT -and (Test-Path $vcpkgInstalled)) {
-            $extra = "-DCMAKE_PREFIX_PATH=`"$vcpkgInstalled`""
+          if ($env:VCPKG_INSTALLATION_ROOT) {
+            $vcpkgInstalled = Join-Path $env:VCPKG_INSTALLATION_ROOT "installed\x64-windows"
+            if (Test-Path $vcpkgInstalled) {
+              $extra = "-DCMAKE_PREFIX_PATH=`"$vcpkgInstalled`""
+            }
           }
           $build = Join-Path $env:GITHUB_WORKSPACE "build"
           $line = ".\.github\workflows\build-windows.bat cmake -GNinja -S `"$env:GITHUB_WORKSPACE`" -B `"$build`" -DCMAKE_BUILD_TYPE=$env:BUILD_TYPE -DQt6_DIR=`"$env:QT_ROOT_DIR/lib/cmake/Qt6`" $extra"
@@ -188,12 +194,12 @@ jobs:
           $install = Join-Path $env:GITHUB_WORKSPACE "build\install"
           if (-not (Test-Path $install)) {
             # Some generators place install under build/install; fall back to install prefix scan
-            $candidates = Get-ChildItem -Path (Join-Path $env:GITHUB_WORKSPACE "build") -Recurse -Filter "opentrack.exe" -ErrorAction SilentlyContinue |
-              Select-Object -First 5 FullName
-            Write-Host "opentrack.exe search:"
-            $candidates | ForEach-Object { Write-Host $_.FullName }
-            if (Test-Path $install) { }
-            else {
+            $candidates = Get-ChildItem -Path (Join-Path $env:GITHUB_WORKSPACE "build") -Recurse -Filter "opentrack.exe" -ErrorAction SilentlyContinue
+            if ($candidates) {
+              $firstCand = $candidates | Select-Object -First 1
+              $install = Split-Path -Parent $firstCand.FullName
+              Write-Host "Install tree inferred from opentrack.exe location: $install"
+            } else {
               # Default CMAKE_INSTALL_PREFIX is ${CMAKE_BINARY_DIR}/install
               throw "Install tree not found at $install"
             }
@@ -213,11 +219,22 @@ jobs:
           }
           $ptCandidates = $ptCands | Where-Object { $_ -and (Test-Path $_) }
 
+          $adbFiles = @("adb.exe", "AdbWinApi.dll", "AdbWinUsbApi.dll")
+
           $ptFound = $null
           foreach ($cand in $ptCandidates) {
-            if ($cand -and (Test-Path (Join-Path $cand "adb.exe"))) {
-              $ptFound = $cand
-              break
+            if ($cand) {
+              $hasAllAdb = $true
+              foreach ($f in $adbFiles) {
+                if (-not (Test-Path (Join-Path $cand $f))) {
+                  $hasAllAdb = $false
+                  break
+                }
+              }
+              if ($hasAllAdb) {
+                $ptFound = $cand
+                break
+              }
             }
           }
 
@@ -226,16 +243,25 @@ jobs:
             $tempDir = if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { [System.IO.Path]::GetTempPath() }
             $ptZip = Join-Path $tempDir "platform-tools.zip"
             $ptExtract = Join-Path $tempDir "pt"
+            if (Test-Path $ptExtract) {
+              Remove-Item -Path $ptExtract -Recurse -Force
+            }
             Invoke-WebRequest -Uri "https://dl.google.com/android/repository/platform-tools-latest-windows.zip" -OutFile $ptZip
             Expand-Archive -Path $ptZip -DestinationPath $ptExtract -Force
             $ptFound = Join-Path $ptExtract "platform-tools"
+            if (-not (Test-Path (Join-Path $ptFound "adb.exe"))) {
+              if (Test-Path (Join-Path $ptExtract "adb.exe")) {
+                $ptFound = $ptExtract
+              } else {
+                throw "Downloaded platform-tools package does not contain adb.exe"
+              }
+            }
           }
 
           Write-Host "ADB platform-tools located at: $ptFound"
 
           # 2. Bundle ADB tools (adb.exe, AdbWinApi.dll, AdbWinUsbApi.dll)
           # Target destinations: $install (application root), $install\modules, $install\platform-tools
-          $adbFiles = @("adb.exe", "AdbWinApi.dll", "AdbWinUsbApi.dll")
           $adbDests = @(
             $install,
             (Join-Path $install "modules"),
@@ -250,7 +276,7 @@ jobs:
               $src = Join-Path $ptFound $f
               $destFile = Join-Path $dest $f
               if (Test-Path $src) {
-                if (-not (Test-Path $destFile) -or (Resolve-Path $src).Path -ne (Resolve-Path $destFile).Path) {
+                if (-not (Test-Path $destFile) -or ([System.IO.Path]::GetFullPath($src) -ne [System.IO.Path]::GetFullPath($destFile))) {
                   Copy-Item -Path $src -Destination $dest -Force
                 }
                 Write-Host "Packaged ADB tool $f -> $dest"
@@ -278,7 +304,7 @@ jobs:
               $src = Join-Path $relaySrcDir $rf
               $destFile = Join-Path $dest $rf
               if (Test-Path $src) {
-                if (-not (Test-Path $destFile) -or (Resolve-Path $src).Path -ne (Resolve-Path $destFile).Path) {
+                if (-not (Test-Path $destFile) -or ([System.IO.Path]::GetFullPath($src) -ne [System.IO.Path]::GetFullPath($destFile))) {
                   Copy-Item -Path $src -Destination $dest -Force
                 }
                 Write-Host "Staged relay binary $rf -> $dest"
@@ -286,7 +312,7 @@ jobs:
                 # Fallback check if CMake already staged it into install tree
                 $altSrc = Join-Path $install $rf
                 if (Test-Path $altSrc) {
-                  if (-not (Test-Path $destFile) -or (Resolve-Path $altSrc).Path -ne (Resolve-Path $destFile).Path) {
+                  if (-not (Test-Path $destFile) -or ([System.IO.Path]::GetFullPath($altSrc) -ne [System.IO.Path]::GetFullPath($destFile))) {
                     Copy-Item -Path $altSrc -Destination $dest -Force
                   }
                   Write-Host "Staged relay binary $rf (from install root) -> $dest"
@@ -353,7 +379,14 @@ jobs:
           if ($zipItem.Length -le 0) {
             throw "Post-compression check failed: $zipPath is 0-byte"
           }
-          Write-Host "Release archive successfully created: $zipPath ($([math]::Round($zipItem.Length / 1MB, 2)) MB, $($zipItem.Length) bytes)"
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zipArchive = [System.IO.Compression.ZipFile]::OpenRead($zipPath)
+          $entryCount = $zipArchive.Entries.Count
+          $zipArchive.Dispose()
+          if ($entryCount -le 0) {
+            throw "Post-compression check failed: $zipPath contains 0 entries"
+          }
+          Write-Host "Release archive successfully created and validated: $zipPath ($([math]::Round($zipItem.Length / 1MB, 2)) MB, $($zipItem.Length) bytes, $entryCount entries)"
 
       - name: Upload Windows 11 build artifact
         uses: actions/upload-artifact@v4
