@@ -10,6 +10,7 @@
 
 #include <QCoreApplication>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFileInfo>
 #include <QObject>
 #include <QStandardPaths>
@@ -52,6 +53,8 @@ bool run_adb_cmd(const QString& adb_path, const QStringList& args, int timeout_m
     }
 
     QProcess proc;
+    QElapsedTimer timer;
+    timer.start();
     proc.start(adb_path, args);
 
     if (!proc.waitForStarted(qMin(timeout_ms, 5000)))
@@ -65,7 +68,8 @@ bool run_adb_cmd(const QString& adb_path, const QStringList& args, int timeout_m
         return false;
     }
 
-    if (!proc.waitForFinished(timeout_ms))
+    const int remaining = qMax(0, timeout_ms - static_cast<int>(timer.elapsed()));
+    if (!proc.waitForFinished(remaining))
     {
         proc.kill();
         proc.waitForFinished(200);
@@ -93,6 +97,19 @@ void kill_device_relay(const QString& adb_path, const QString& serial)
                        "kill $(pidof st-relay) || kill $(pidof /data/local/tmp/st-relay) || true");
     run_adb_cmd(adb_path, with_serial(serial, {"shell", "sh", "-c", kKill}),
                 adb_client::QUICK_TIMEOUT_MS);
+}
+
+QString collect_qprocess_output(QProcess* proc)
+{
+    if (!proc)
+        return QString();
+    const QString err = QString::fromUtf8(proc->readAllStandardError()).trimmed();
+    const QString out = QString::fromUtf8(proc->readAllStandardOutput()).trimmed();
+    if (err.isEmpty())
+        return out;
+    if (out.isEmpty())
+        return err;
+    return err + QLatin1Char('\n') + out;
 }
 
 } // anonymous namespace
@@ -221,7 +238,6 @@ bool adb_client::check_device(const QString& adb_path, QString* error_msg, QStri
         return false;
     }
 
-    // 1. First pass: prioritize any ready, authorized device
     for (const device_info& dev : devices)
     {
         if (dev.status == "device")
@@ -232,7 +248,6 @@ bool adb_client::check_device(const QString& adb_path, QString* error_msg, QStri
         }
     }
 
-    // 2. Second pass: surface specific diagnostics for unauthorized or offline devices
     for (const device_info& dev : devices)
     {
         if (dev.status == "unauthorized")
@@ -274,7 +289,7 @@ QString adb_client::get_device_abi(const QString& adb_path, const QString& seria
             return abi;
     }
 
-    return "arm64-v8a"; // Default fallback for modern Android devices
+    return QString();
 }
 
 QString adb_client::find_relay_binary(const QString& abi)
@@ -288,6 +303,7 @@ QString adb_client::find_relay_binary(const QString& abi)
     const QStringList candidates = {
         app_dir + "/modules/android/" + filename,
         app_dir + "/../libexec/opentrack/android/" + filename,
+        app_dir + "/../Plugins/android/" + filename,
     };
 
     for (const QString& candidate : candidates)
@@ -372,7 +388,9 @@ bool adb_client::start(const QString& adb_path, int udp_port, int tcp_port, QStr
     if (suffix.isEmpty())
     {
         if (error_msg)
-            *error_msg = QObject::tr("Unsupported Android ABI '%1' (need armv7 or arm64).").arg(abi);
+            *error_msg = abi.isEmpty()
+                             ? QObject::tr("Could not determine Android ABI (need armv7 or arm64).")
+                             : QObject::tr("Unsupported Android ABI '%1' (need armv7 or arm64).").arg(abi);
         stop();
         return false;
     }
@@ -381,8 +399,8 @@ bool adb_client::start(const QString& adb_path, int udp_port, int tcp_port, QStr
     if (relay_bin.isEmpty())
     {
         if (error_msg)
-            *error_msg = QObject::tr("Relay binary (st-relay-%1) not found in OpenTrack directory.\n"
-                                     "Please ensure OpenTrack modules/android files are intact.")
+            *error_msg = QObject::tr("Relay binary (st-relay-%1) not found.\n"
+                                     "Looked in modules/android, libexec/opentrack/android, and Plugins/android.")
                              .arg(suffix);
         stop();
         return false;
@@ -424,7 +442,7 @@ bool adb_client::start(const QString& adb_path, int udp_port, int tcp_port, QStr
 
     if (relay_proc->waitForFinished(400))
     {
-        last_relay_stderr = QString::fromUtf8(relay_proc->readAllStandardError()).trimmed();
+        last_relay_stderr = collect_qprocess_output(relay_proc.get());
         if (error_msg)
         {
             *error_msg = last_relay_stderr.isEmpty()
@@ -474,11 +492,8 @@ bool adb_client::is_running() const
 
 QString adb_client::relay_stderr()
 {
-    if (relay_proc)
-    {
-        const QString chunk = QString::fromUtf8(relay_proc->readAllStandardError());
-        if (!chunk.isEmpty())
-            last_relay_stderr = chunk.trimmed();
-    }
+    const QString chunk = collect_qprocess_output(relay_proc.get());
+    if (!chunk.isEmpty())
+        last_relay_stderr = chunk;
     return last_relay_stderr;
 }
