@@ -114,3 +114,10 @@ foreach(_relay_bin IN LISTS _relay_bins)
                 PERMISSIONS ${opentrack-perms-exec})
     endif()
 endforeach()
+
+# Host test for relay I/O helpers. POSIX sockets only; not installed.
+if(NOT WIN32)
+    add_executable(test_relay_io "${CMAKE_SOURCE_DIR}/tests/test_relay_io.c")
+    target_include_directories(test_relay_io PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/android")
+endif()
+
