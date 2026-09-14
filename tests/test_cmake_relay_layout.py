@@ -44,6 +44,10 @@ class TestCMakeRelayLayout(unittest.TestCase):
             "CMake must not install(FILES) source-tree st-relay prebuilts",
         )
         self.assertIn("CMAKE_CURRENT_BINARY_DIR}/android", text)
+        self.assertIn("--target=aarch64-linux-android24", text)
+        self.assertIn("--target=armv7a-linux-androideabi24", text)
+        self.assertIn('EXISTS "${_st_bin}/clang.exe"', text)
+        self.assertNotIn("find_program(_st_clang", text)
 
     def test_workflow_copies_adb_once_and_relays_to_modules_android(self):
         package = extract_workflow_step("Package install tree")

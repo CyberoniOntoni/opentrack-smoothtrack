@@ -89,6 +89,9 @@ jobs:
             Add-Content -LiteralPath $env:GITHUB_ENV -Value "ANDROID_NDK_ROOT=$($env:ANDROID_NDK_ROOT)"
           }
           Write-Host "Exported ANDROID_NDK_ROOT=$($env:ANDROID_NDK_ROOT) for CMake st-relay-android"
+          Get-ChildItem -LiteralPath $env:ANDROID_NDK_ROOT -Recurse -Filter clang.exe -ErrorAction SilentlyContinue |
+            Select-Object -First 5 |
+            ForEach-Object { Write-Host "NDK clang: $($_.FullName)" }
 
       - name: Configure (MSVC via build-windows.bat)
         env:
