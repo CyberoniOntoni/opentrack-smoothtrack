@@ -57,6 +57,8 @@ class TestAdbClientPaths(unittest.TestCase):
             text = f.read()
         body = _function_source(text, "void adb_client::stop")
         self.assertIn("reverse_installed && active_port", body)
+        self.assertIn("kill-server", body)
+        self.assertIn("started_adb_server", body)
 
     def test_start_verifies_relay_launch(self):
         with open(ADB_CPP, encoding="utf-8") as f:

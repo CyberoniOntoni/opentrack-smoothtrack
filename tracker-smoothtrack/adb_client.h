@@ -52,6 +52,7 @@ private:
     QString active_serial;
     int active_port{0};
     bool reverse_installed{false};
+    bool started_adb_server{false};
     QString last_relay_stderr;
     std::unique_ptr<QProcess> relay_proc;
 };
