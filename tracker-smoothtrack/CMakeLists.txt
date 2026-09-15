@@ -145,16 +145,16 @@ if(_st_clang)
     add_custom_command(
         OUTPUT "${_st_relay_dir}/st-relay-arm64"
         COMMAND "${_st_clang}" --target=aarch64-linux-android24
-                -O2 -Wall -Wextra -static "${_st_relay_src}"
-                -o "${_st_relay_dir}/st-relay-arm64"
+                -O2 -Wall -Wextra -fPIE -pie -Wl,-z,max-page-size=16384
+                "${_st_relay_src}" -o "${_st_relay_dir}/st-relay-arm64"
         DEPENDS "${_st_relay_src}"
         COMMENT "Cross-compiling st-relay-arm64"
     )
     add_custom_command(
         OUTPUT "${_st_relay_dir}/st-relay-armv7"
         COMMAND "${_st_clang}" --target=armv7a-linux-androideabi24
-                -O2 -Wall -Wextra -static "${_st_relay_src}"
-                -o "${_st_relay_dir}/st-relay-armv7"
+                -O2 -Wall -Wextra -fPIE -pie -Wl,-z,max-page-size=16384
+                "${_st_relay_src}" -o "${_st_relay_dir}/st-relay-armv7"
         DEPENDS "${_st_relay_src}"
         COMMENT "Cross-compiling st-relay-armv7"
     )
