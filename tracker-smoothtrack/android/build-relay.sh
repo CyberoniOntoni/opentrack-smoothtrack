@@ -41,18 +41,20 @@ if [[ -n "${ANDROID_NDK_ROOT:-}" && -d "${ANDROID_NDK_ROOT}" ]]; then
     fi
     echo "Compiling st-relay-arm64..."
     "${CLANG}" --target=aarch64-linux-android${API_LEVEL} \
-        -O2 -Wall -Wextra -static "${SCRIPT_DIR}/relay.c" -o "${OUT_DIR}/st-relay-arm64"
+        -O2 -Wall -Wextra -fPIE -pie -Wl,-z,max-page-size=16384 \
+        "${SCRIPT_DIR}/relay.c" -o "${OUT_DIR}/st-relay-arm64"
     chmod +x "${OUT_DIR}/st-relay-arm64"
 
     echo "Compiling st-relay-armv7..."
     "${CLANG}" --target=armv7a-linux-androideabi${API_LEVEL} \
-        -O2 -Wall -Wextra -static "${SCRIPT_DIR}/relay.c" -o "${OUT_DIR}/st-relay-armv7"
+        -O2 -Wall -Wextra -fPIE -pie -Wl,-z,max-page-size=16384 \
+        "${SCRIPT_DIR}/relay.c" -o "${OUT_DIR}/st-relay-armv7"
     chmod +x "${OUT_DIR}/st-relay-armv7"
 
     echo "Relay binaries successfully built in ${OUT_DIR}"
     ls -la "${OUT_DIR}/st-relay-arm64" "${OUT_DIR}/st-relay-armv7"
 else
     echo "Android NDK not found. To compile manually:"
-    echo "  \$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/<host>/bin/clang --target=aarch64-linux-android24 -O2 -static relay.c -o st-relay-arm64"
+    echo "  \$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/<host>/bin/clang --target=aarch64-linux-android24 -O2 -fPIE -pie -Wl,-z,max-page-size=16384 relay.c -o st-relay-arm64"
     exit 1
 fi

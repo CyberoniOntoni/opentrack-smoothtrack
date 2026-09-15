@@ -65,7 +65,9 @@ class TestR4CIWorkflowAndPackagingStress(unittest.TestCase):
         self.assertIn("st-relay-android", build_relay["run"])
 
         cmake_text = extract_cmake()
-        self.assertIn("-static", cmake_text)
+        self.assertNotIn("-static", cmake_text)
+        self.assertIn("-fPIE", cmake_text)
+        self.assertIn("-Wl,-z,max-page-size=16384", cmake_text)
         self.assertIn("-O2", cmake_text)
 
     def test_r4_relay_c_source_code_integrity(self):
