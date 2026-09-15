@@ -12,8 +12,10 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFileInfo>
+#include <QHostAddress>
 #include <QObject>
 #include <QStandardPaths>
+#include <QTcpSocket>
 #include <QDebug>
 #include <QThread>
 #include <QRegularExpression>
@@ -31,6 +33,15 @@ QStringList with_serial(const QString& serial, QStringList args)
     if (!serial.isEmpty())
         args = QStringList{"-s", serial} + args;
     return args;
+}
+
+bool adb_server_listening()
+{
+    QTcpSocket sock;
+    sock.connectToHost(QHostAddress::LocalHost, 5037);
+    const bool ok = sock.waitForConnected(200);
+    sock.abort();
+    return ok;
 }
 
 QString abi_to_suffix(const QString& abi)
@@ -359,15 +370,18 @@ bool adb_client::start(const QString& adb_path, int udp_port, int tcp_port, QStr
     active_adb = adb_path;
     last_relay_stderr.clear();
 
+    const bool server_already_up = adb_server_listening();
     QString err_str;
     if (!run_adb_cmd(active_adb, {"start-server"}, START_SERVER_TIMEOUT_MS, nullptr, &err_str))
     {
+        started_adb_server = !server_already_up;
         if (error_msg)
             *error_msg = QObject::tr("Failed to start ADB server: %1")
                              .arg(err_str.trimmed().isEmpty() ? "Unknown error" : err_str.trimmed());
         stop();
         return false;
     }
+    started_adb_server = !server_already_up;
 
     if (!check_device(active_adb, error_msg, &active_serial))
     {
@@ -479,7 +493,11 @@ void adb_client::stop()
         remove_reverse(active_adb, active_port, active_serial);
     }
 
+    if (started_adb_server && !active_adb.isEmpty() && QFileInfo::exists(active_adb))
+        run_adb_cmd(active_adb, {"kill-server"}, DEFAULT_TIMEOUT_MS);
+
     reverse_installed = false;
+    started_adb_server = false;
     active_adb.clear();
     active_serial.clear();
     active_port = 0;
